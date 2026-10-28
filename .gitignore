@@ -1,0 +1,24 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# 密钥与本地配置
+.env
+.env.*
+
+# 运行时数据（种子 42，scripts/gen_data.py 确定性重建）
+data/*.duckdb
+data/*.duckdb.wal
+data/*.wal
+data/*.jsonl
+tests/_db/
+
+# 评测报告是证据链的一部分，**提交**（不忽略 eval/report_*.md）
+
+# OS
+.DS_Store
+Thumbs.db

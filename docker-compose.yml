@@ -1,0 +1,26 @@
+services:
+  askbi:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-mock}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - API_KEY=${API_KEY:-}
+      - ROLE=${ROLE:-boss}
+    volumes:
+      # 数据与任务日志持久化（重建容器不丢历史）
+      - askbi_data:/app/data
+    restart: unless-stopped
+
+  # 一次性评测任务示例：docker compose run --rm eval
+  eval:
+    build: .
+    profiles: ["tools"]
+    command: python scripts/run_eval.py
+    volumes:
+      - askbi_data:/app/data
+
+volumes:
+  askbi_data:

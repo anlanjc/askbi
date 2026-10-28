@@ -1,0 +1,897 @@
+{
+ "note": "v2 分层评测集（full）：金标由 compile_sql 生成（scripts/build_dataset_v2.py 可重建/自检）。v1 33 条保留为 smoke 回归集。split=holdout 的 15 条不参与任何调参。构成：{('clarify', 'holdout'): 2, ('clarify', 'main'): 10, ('drill', 'holdout'): 2, ('drill', 'main'): 10, ('query', 'holdout'): 7, ('query', 'main'): 73, ('refusal', 'holdout'): 2, ('refusal', 'main'): 10}",
+ "items": [
+  {
+   "id": "v2-001",
+   "kind": "query",
+   "question": "上个月的总销售额是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-002",
+   "kind": "query",
+   "question": "上月订单量有多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-003",
+   "kind": "query",
+   "question": "上个月一共卖了多少件商品",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(oi.quantity) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-004",
+   "kind": "query",
+   "question": "上月客单价是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) / NULLIF(COUNT(DISTINCT o.order_id), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-005",
+   "kind": "query",
+   "question": "上个月的毛利额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-006",
+   "kind": "query",
+   "question": "上月毛利率是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-007",
+   "kind": "query",
+   "question": "上个月的退货率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(CASE WHEN o.status = '已退货' THEN (oi.quantity * oi.unit_price * (1 - oi.discount)) ELSE 0 END) / NULLIF(SUM(oi.quantity * oi.unit_price * (1 - oi.discount)), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-008",
+   "kind": "query",
+   "question": "上月有多少购买客户",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT o.customer_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-009",
+   "kind": "query",
+   "question": "最近3个月销售额是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-010",
+   "kind": "query",
+   "question": "最近6个月的订单量",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-011",
+   "kind": "query",
+   "question": "最近12个月的客单价",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) / NULLIF(COUNT(DISTINCT o.order_id), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-012",
+   "kind": "query",
+   "question": "2024年10月到2025年3月的销售额",
+   "role": "boss",
+   "split": "holdout",
+   "gold_sql": "SELECT SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= '2024-10' AND strftime('%Y-%m', o.order_date) <= '2025-03'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-013",
+   "kind": "query",
+   "question": "上月净销售额是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(CASE WHEN o.status = '已退货' THEN 0 ELSE (oi.quantity * oi.unit_price * (1 - oi.discount)) END) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-014",
+   "kind": "query",
+   "question": "全部时间内总销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-015",
+   "kind": "query",
+   "question": "各品类销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY p.category\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-016",
+   "kind": "query",
+   "question": "各大区毛利率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.region AS region, ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.region\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-017",
+   "kind": "query",
+   "question": "各渠道订单量",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.channel AS channel, COUNT(DISTINCT o.order_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-018",
+   "kind": "query",
+   "question": "各会员等级客单价",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT c.member_level AS member_level, (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) / NULLIF(COUNT(DISTINCT o.order_id), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY c.member_level\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-019",
+   "kind": "query",
+   "question": "各品类退货率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(CASE WHEN o.status = '已退货' THEN (oi.quantity * oi.unit_price * (1 - oi.discount)) ELSE 0 END) / NULLIF(SUM(oi.quantity * oi.unit_price * (1 - oi.discount)), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY p.category\nORDER BY value ASC\nLIMIT 100"
+  },
+  {
+   "id": "v2-020",
+   "kind": "query",
+   "question": "各大区销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.region AS region, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.region\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-021",
+   "kind": "query",
+   "question": "各渠道毛利率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.channel AS channel, ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-022",
+   "kind": "query",
+   "question": "各细分品类销量",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.subcategory AS subcategory, SUM(oi.quantity) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY p.subcategory\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-023",
+   "kind": "query",
+   "question": "各城市销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.city AS city, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.city\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-024",
+   "kind": "query",
+   "question": "各省份订单量",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.province AS province, COUNT(DISTINCT o.order_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.province\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-025",
+   "kind": "query",
+   "question": "上月各品类净销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(CASE WHEN o.status = '已退货' THEN 0 ELSE (oi.quantity * oi.unit_price * (1 - oi.discount)) END) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY p.category\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-026",
+   "kind": "query",
+   "question": "最近3个月各渠道销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.channel AS channel, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH)\nGROUP BY o.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-027",
+   "kind": "query",
+   "question": "各品类毛利额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY p.category\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-028",
+   "kind": "query",
+   "question": "各会员等级购买客户数",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT c.member_level AS member_level, COUNT(DISTINCT o.customer_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY c.member_level\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-029",
+   "kind": "query",
+   "question": "各城市毛利率",
+   "role": "boss",
+   "split": "holdout",
+   "gold_sql": "SELECT o.city AS city, ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.city\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-030",
+   "kind": "query",
+   "question": "最近6个月各品类退货率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(CASE WHEN o.status = '已退货' THEN (oi.quantity * oi.unit_price * (1 - oi.discount)) ELSE 0 END) / NULLIF(SUM(oi.quantity * oi.unit_price * (1 - oi.discount)), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY p.category\nORDER BY value ASC\nLIMIT 100"
+  },
+  {
+   "id": "v2-031",
+   "kind": "query",
+   "question": "销售额最高的品类",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY p.category\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-032",
+   "kind": "query",
+   "question": "哪个大区订单量最多",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.region AS region, COUNT(DISTINCT o.order_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.region\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-033",
+   "kind": "query",
+   "question": "销售额排名前3的渠道",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.channel AS channel, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.channel\nORDER BY value DESC\nLIMIT 3"
+  },
+  {
+   "id": "v2-034",
+   "kind": "query",
+   "question": "退货率最高的品类",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(CASE WHEN o.status = '已退货' THEN (oi.quantity * oi.unit_price * (1 - oi.discount)) ELSE 0 END) / NULLIF(SUM(oi.quantity * oi.unit_price * (1 - oi.discount)), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY p.category\nORDER BY value ASC\nLIMIT 100"
+  },
+  {
+   "id": "v2-035",
+   "kind": "query",
+   "question": "客单价最低的会员等级",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT c.member_level AS member_level, (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) / NULLIF(COUNT(DISTINCT o.order_id), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY c.member_level\nORDER BY value ASC\nLIMIT 100"
+  },
+  {
+   "id": "v2-036",
+   "kind": "query",
+   "question": "销量前5的细分品类",
+   "role": "boss",
+   "split": "holdout",
+   "gold_sql": "SELECT p.subcategory AS subcategory, SUM(oi.quantity) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY p.subcategory\nORDER BY value DESC\nLIMIT 5"
+  },
+  {
+   "id": "v2-037",
+   "kind": "query",
+   "question": "毛利率最差的大区",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.region AS region, ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.region\nORDER BY value ASC\nLIMIT 100"
+  },
+  {
+   "id": "v2-038",
+   "kind": "query",
+   "question": "购买客户数最多的城市",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.city AS city, COUNT(DISTINCT o.customer_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE TRUE\nGROUP BY o.city\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-039",
+   "kind": "query",
+   "question": "上月销售额前3的品类",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY p.category\nORDER BY value DESC\nLIMIT 3"
+  },
+  {
+   "id": "v2-040",
+   "kind": "query",
+   "question": "最近3个月销售额最高的渠道",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT o.channel AS channel, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH)\nGROUP BY o.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-041",
+   "kind": "query",
+   "question": "近6个月销售额趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY strftime('%Y-%m', o.order_date)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-042",
+   "kind": "query",
+   "question": "近12个月订单量趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, COUNT(DISTINCT o.order_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH)\nGROUP BY strftime('%Y-%m', o.order_date)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-043",
+   "kind": "query",
+   "question": "近3个月毛利率走势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH)\nGROUP BY strftime('%Y-%m', o.order_date)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-044",
+   "kind": "query",
+   "question": "近12个月客单价趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) / NULLIF(COUNT(DISTINCT o.order_id), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH)\nGROUP BY strftime('%Y-%m', o.order_date)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-045",
+   "kind": "query",
+   "question": "近6个月美妆品类销售额趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND p.category = '美妆'\nGROUP BY strftime('%Y-%m', o.order_date)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-046",
+   "kind": "query",
+   "question": "近6个月华南地区退货率趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, SUM(CASE WHEN o.status = '已退货' THEN (oi.quantity * oi.unit_price * (1 - oi.discount)) ELSE 0 END) / NULLIF(SUM(oi.quantity * oi.unit_price * (1 - oi.discount)), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND o.region = '华南'\nGROUP BY strftime('%Y-%m', o.order_date)\nORDER BY value ASC\nLIMIT 100"
+  },
+  {
+   "id": "v2-047",
+   "kind": "query",
+   "question": "近12个月直播渠道销量趋势",
+   "role": "boss",
+   "split": "holdout",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, SUM(oi.quantity) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH) AND o.channel = '直播'\nGROUP BY strftime('%Y-%m', o.order_date)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-048",
+   "kind": "query",
+   "question": "近3个月黑卡会员客单价趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) / NULLIF(COUNT(DISTINCT o.order_id), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH) AND c.member_level = '黑卡'\nGROUP BY strftime('%Y-%m', o.order_date)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-049",
+   "kind": "query",
+   "question": "近6个月销售额逐月走势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY strftime('%Y-%m', o.order_date)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-050",
+   "kind": "query",
+   "question": "近6个月各渠道销售额趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, o.channel AS channel, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY strftime('%Y-%m', o.order_date), o.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-051",
+   "kind": "query",
+   "question": "华南地区上月销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region = '华南'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-052",
+   "kind": "query",
+   "question": "美妆品类上月毛利率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND p.category = '美妆'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-053",
+   "kind": "query",
+   "question": "直播渠道最近3个月订单量",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH) AND o.channel = '直播'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-054",
+   "kind": "query",
+   "question": "黑卡会员上月客单价",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) / NULLIF(COUNT(DISTINCT o.order_id), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.member_level = '黑卡'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-055",
+   "kind": "query",
+   "question": "食品品类最近6个月退货率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(CASE WHEN o.status = '已退货' THEN (oi.quantity * oi.unit_price * (1 - oi.discount)) ELSE 0 END) / NULLIF(SUM(oi.quantity * oi.unit_price * (1 - oi.discount)), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND p.category = '食品'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-056",
+   "kind": "query",
+   "question": "华东地区上月毛利额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region = '华东'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-057",
+   "kind": "query",
+   "question": "数码品类近12个月销量",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(oi.quantity) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH) AND p.category = '数码'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-058",
+   "kind": "query",
+   "question": "官网渠道上月净销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(CASE WHEN o.status = '已退货' THEN 0 ELSE (oi.quantity * oi.unit_price * (1 - oi.discount)) END) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.channel = '官网'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-059",
+   "kind": "query",
+   "question": "银卡会员最近3个月购买客户数",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT o.customer_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH) AND c.member_level = '银卡'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-060",
+   "kind": "query",
+   "question": "西南地区近6个月订单量",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND o.region = '西南'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-061",
+   "kind": "query",
+   "question": "家居品类上月销售额",
+   "role": "boss",
+   "split": "holdout",
+   "gold_sql": "SELECT SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND p.category = '家居'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-062",
+   "kind": "query",
+   "question": "搜索渠道上月毛利率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.channel = '搜索'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-063",
+   "kind": "query",
+   "question": "东北地区上月退货率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(CASE WHEN o.status = '已退货' THEN (oi.quantity * oi.unit_price * (1 - oi.discount)) ELSE 0 END) / NULLIF(SUM(oi.quantity * oi.unit_price * (1 - oi.discount)), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region = '东北'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-064",
+   "kind": "query",
+   "question": "运动品类近3个月客单价",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) / NULLIF(COUNT(DISTINCT o.order_id), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH) AND p.category = '运动'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-065",
+   "kind": "query",
+   "question": "2024年10月到12月的销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= '2024-10' AND strftime('%Y-%m', o.order_date) <= '2024-12'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-066",
+   "kind": "query",
+   "question": "2025年1月至2025年6月各品类销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= '2025-01' AND strftime('%Y-%m', o.order_date) <= '2025-06'\nGROUP BY p.category\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-067",
+   "kind": "query",
+   "question": "2025年7月到9月的毛利率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= '2025-07' AND strftime('%Y-%m', o.order_date) <= '2025-09'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-068",
+   "kind": "query",
+   "question": "2024-10至2025-09的订单量",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= '2024-10' AND strftime('%Y-%m', o.order_date) <= '2025-09'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-069",
+   "kind": "query",
+   "question": "上月美妆品类的净销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(CASE WHEN o.status = '已退货' THEN 0 ELSE (oi.quantity * oi.unit_price * (1 - oi.discount)) END) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND p.category = '美妆'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-070",
+   "kind": "query",
+   "question": "上月华南地区净销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(CASE WHEN o.status = '已退货' THEN 0 ELSE (oi.quantity * oi.unit_price * (1 - oi.discount)) END) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region = '华南'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-071",
+   "kind": "query",
+   "question": "上月各品类销售额",
+   "role": "south",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region IN ('华南')\nGROUP BY p.category\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-072",
+   "kind": "query",
+   "question": "上月销售额",
+   "role": "south",
+   "split": "main",
+   "gold_sql": "SELECT SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region IN ('华南')\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-073",
+   "kind": "query",
+   "question": "上月各渠道毛利率",
+   "role": "south",
+   "split": "main",
+   "gold_sql": "SELECT o.channel AS channel, ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region IN ('华南')\nGROUP BY o.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-074",
+   "kind": "query",
+   "question": "最近3个月各品类退货率",
+   "role": "south",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(CASE WHEN o.status = '已退货' THEN (oi.quantity * oi.unit_price * (1 - oi.discount)) ELSE 0 END) / NULLIF(SUM(oi.quantity * oi.unit_price * (1 - oi.discount)), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH) AND o.region IN ('华南')\nGROUP BY p.category\nORDER BY value ASC\nLIMIT 100"
+  },
+  {
+   "id": "v2-075",
+   "kind": "query",
+   "question": "上月各品类销售额",
+   "role": "north",
+   "split": "main",
+   "gold_sql": "SELECT p.category AS category, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region IN ('华北', '东北')\nGROUP BY p.category\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-076",
+   "kind": "query",
+   "question": "上月订单量",
+   "role": "north",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region IN ('华北', '东北')\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-077",
+   "kind": "query",
+   "question": "上月各会员等级客单价",
+   "role": "north",
+   "split": "main",
+   "gold_sql": "SELECT c.member_level AS member_level, (SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) / NULLIF(COUNT(DISTINCT o.order_id), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region IN ('华北', '东北')\nGROUP BY c.member_level\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-078",
+   "kind": "query",
+   "question": "最近6个月各渠道销售额趋势",
+   "role": "north",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', o.order_date) AS month, o.channel AS channel, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND o.region IN ('华北', '东北')\nGROUP BY strftime('%Y-%m', o.order_date), o.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-079",
+   "kind": "query",
+   "question": "上月毛利率",
+   "role": "south",
+   "split": "holdout",
+   "gold_sql": "SELECT ((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))) - (SUM(oi.quantity * p.supply_cost))) / NULLIF((SUM(oi.quantity * oi.unit_price * (1 - oi.discount))), 0) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region IN ('华南')\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-080",
+   "kind": "query",
+   "question": "上月净销售额",
+   "role": "north",
+   "split": "holdout",
+   "gold_sql": "SELECT SUM(CASE WHEN o.status = '已退货' THEN 0 ELSE (oi.quantity * oi.unit_price * (1 - oi.discount)) END) AS value\nFROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id\nWHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND o.region IN ('华北', '东北')\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "v2-081",
+   "kind": "drill",
+   "question": "为什么上月美妆品类的毛利率下滑了",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-082",
+   "kind": "drill",
+   "question": "上个月整体毛利率为什么下滑",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-083",
+   "kind": "drill",
+   "question": "为什么最近3个月直播渠道销售额增长",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-084",
+   "kind": "drill",
+   "question": "最近6个月数码品类销售额为什么增长",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-085",
+   "kind": "drill",
+   "question": "为什么上月华南地区退货率升高",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-086",
+   "kind": "drill",
+   "question": "分析上月各品类毛利率",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-087",
+   "kind": "drill",
+   "question": "对比最近6个月各渠道的销售额变化",
+   "role": "boss",
+   "split": "holdout"
+  },
+  {
+   "id": "v2-088",
+   "kind": "drill",
+   "question": "为什么上月官网渠道的客单价波动",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-089",
+   "kind": "drill",
+   "question": "归因一下最近3个月各大区销售额的变化",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-090",
+   "kind": "drill",
+   "question": "上月退货率为什么上升",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-091",
+   "kind": "drill",
+   "question": "为什么各会员等级的客单价不同",
+   "role": "boss",
+   "split": "holdout"
+  },
+  {
+   "id": "v2-092",
+   "kind": "drill",
+   "question": "分析一下上月各渠道的销售额结构",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-093",
+   "kind": "clarify",
+   "question": "卖得怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-094",
+   "kind": "clarify",
+   "question": "上个月卖得怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-095",
+   "kind": "clarify",
+   "question": "最近表现怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-096",
+   "kind": "clarify",
+   "question": "经营情况怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-097",
+   "kind": "clarify",
+   "question": "帮我看看情况",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-098",
+   "kind": "clarify",
+   "question": "哪个卖得好",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-099",
+   "kind": "clarify",
+   "question": "最近三个月表现如何",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-100",
+   "kind": "clarify",
+   "question": "分析一下销售情况",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-101",
+   "kind": "clarify",
+   "question": "哪个渠道比较好",
+   "role": "boss",
+   "split": "holdout"
+  },
+  {
+   "id": "v2-102",
+   "kind": "clarify",
+   "question": "上个月华南的情况怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-103",
+   "kind": "clarify",
+   "question": "这阵子卖得怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-104",
+   "kind": "clarify",
+   "question": "数据整体怎么样",
+   "role": "boss",
+   "split": "holdout"
+  },
+  {
+   "id": "v2-105",
+   "kind": "refusal",
+   "question": "预测下季度的销售额",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-106",
+   "kind": "refusal",
+   "question": "明年销售额会怎样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-107",
+   "kind": "refusal",
+   "question": "下个月哪个品类会卖得最好",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-108",
+   "kind": "refusal",
+   "question": "预计最近的销售趋势",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-109",
+   "kind": "refusal",
+   "question": "复购率是多少",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-110",
+   "kind": "refusal",
+   "question": "客户满意度怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-111",
+   "kind": "refusal",
+   "question": "上月留存率多少",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-112",
+   "kind": "refusal",
+   "question": "好评率最高的商品是哪个",
+   "role": "boss",
+   "split": "holdout"
+  },
+  {
+   "id": "v2-113",
+   "kind": "refusal",
+   "question": "投诉量上个月有多少",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-114",
+   "kind": "refusal",
+   "question": "写一段上月销售总结",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "v2-115",
+   "kind": "refusal",
+   "question": "推荐几个值得投入的方向",
+   "role": "boss",
+   "split": "holdout"
+  },
+  {
+   "id": "v2-116",
+   "kind": "refusal",
+   "question": "评价一下上月的表现",
+   "role": "boss",
+   "split": "main"
+  }
+ ]
+}

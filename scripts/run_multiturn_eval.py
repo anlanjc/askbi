@@ -186,7 +186,7 @@ async def run(only: str | None) -> dict:
     cache_hits = sum(1 for r in results if r["from_cache"])
     lat = [r["elapsed_ms"] for r in results]
     summary = {
-        "provider": "mock", "profile": settings.profile,
+        "provider": settings.llm_provider, "profile": settings.profile,
         "dataset": "eval/dataset_v2_followup.json",
         "only": only, "items": items_all, "items_all_correct": ok_items,
         "turns": turns, "turn_accuracy": ok_turns / max(1, turns),
@@ -201,10 +201,12 @@ async def run(only: str | None) -> dict:
 
 def write_report(s: dict, path: Path) -> None:
     lines = [
-        "# AskBI 多轮评测报告（eval v2 追加集 · mock）",
+        f"# AskBI 多轮评测报告（eval v2 追加集 · {s['provider']}）",
         "",
         f"- 评测集：`{s['dataset']}`" + (f"（--only {s['only']}）" if s["only"] else ""),
-        f"- 环境：provider=mock（零 API 花费）· PROFILE={s['profile']}"
+        f"- 环境：provider={s['provider']}"
+        + ("（零 API 花费）" if s["provider"] == "mock" else "")
+        + f" · PROFILE={s['profile']}"
         "（cache/followup 开）· 挂起条目走独立 checkpointer 图",
         f"- 结果：条目全对 **{s['items_all_correct']}/{s['items']}** · "
         f"轮次正确 **{round(s['turn_accuracy'] * len(s['results']))}/{s['turns']}**"
@@ -238,7 +240,7 @@ async def main() -> None:
     if not get_settings().db_abs_path.exists():
         raise SystemExit(f"数据文件缺失：{get_settings().db_abs_path}（先运行 python scripts/gen_data.py）")
 
-    print(f"多轮评测开始：mock / PROFILE={get_settings().profile} / dataset={DATASET.name}")
+    print(f"多轮评测开始：{get_settings().llm_provider} / PROFILE={get_settings().profile} / dataset={DATASET.name}")
     summary = await run(args.only)
     out = Path(args.out)
     write_report(summary, out)

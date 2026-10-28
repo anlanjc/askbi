@@ -30,6 +30,7 @@
 | full real | v2 116 条 | **94.8%**（110/116，数值一致率 100%）；分类别 query 79/80 · drill 12/12 · clarify 12/12 · refusal 7/12 | 10-29，成本 560,550 token ≈ ¥1.7 |
 | 校准迭代 | refusal/clarify 子集 | clarifier prompt 增补 4 类 refuse 规则（**只用 main split 失败信号**）→ 两子集 **12/12 + 12/12** | holdout 不参与调参 |
 | holdout 盲测 | 13 条 | run1 84.6% / run2 **100%**（失败均为 drill 类运行间波动，主跑同题全 ✓） | 真实口径 ≈92.3%±波动 |
+| **no_qa 消融（real）** | v2 116 条 | **93.1%**：drill **5/12=42%**（vs 主跑 12/12）——**QA 修订循环在 drill 类价值 +58pp**；叙述数值一致率 100%→95.5%；refusal/clarify 校准后无 QA 也 12/12 | 成本 544,462 token；v2-078 失败经 trace 定位=**维度顺序漂移**（非语义错）→ 判分已修为列序无关 |
 | 多轮 | 30 条 64 轮 | **100%**（mock，缓存命中 4/4） | evidence/multiturn_report.md |
 | 故障注入 | 6 场景 ×10 | 零崩溃，全部诚实降级 | evidence/fault_injection.md |
 | 压测 | 12 点位矩阵 | 编排上限 110-124 QPS；300ms 模拟延迟下 P50≈1.2s≈4×LLM | evidence/load_test.md |

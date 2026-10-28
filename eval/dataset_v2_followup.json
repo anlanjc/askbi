@@ -1,0 +1,218 @@
+{
+  "note": "AskBI 多轮评测集（v2 追加集，AB-2）：30 条 × 64 轮，覆盖 指代追问（那美妆呢）/时间追问（上个月呢）/澄清挂起恢复/缓存命中复问/行级权限×多轮 五大类八场景。判分口径：answer=与 gold SQL 结果集一致（复用 app.eval.runner.judge_query，排序后 4 位小数）；refusal/clarify/suspend=行为正确性；from_cache=缓存命中徽章（data_badge.from_cache）；note_contains=指代消解说明必须包含的片段。全部预期在 mock 解析器（app/llm/mock.py）与 context 词表（app/context.py）上逐条实测验证——mock 可判定，零 API 花费。时间锚点：数据截止月 2026-09（上月=近1个月=2026-09；近3个月>=2026-07；近6个月>=2026-04）。runner：scripts/run_multiturn_eval.py。设计决策见 docs/multiturn_adr.md。",
+  "items": [
+    {"id": "fu01", "scenario": "entity_switch", "role": "boss",
+     "desc": "区域追问：那华北呢 继承上轮骨架（region: 华南→华北）",
+     "turns": [
+       {"q": "上月华南地区的销售额", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华南' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那华北呢", "expect": {"kind": "answer", "note_contains": ["华南→华北"], "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华北' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu02", "scenario": "entity_switch", "role": "boss",
+     "desc": "品类追问：那美妆呢（category: 食品→美妆，毛利率）",
+     "turns": [
+       {"q": "上月食品品类的毛利率", "expect": {"kind": "answer", "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE p.category='食品' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那美妆呢", "expect": {"kind": "answer", "note_contains": ["食品→美妆"], "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE p.category='美妆' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu03", "scenario": "entity_switch", "role": "boss",
+     "desc": "区域追问换指标：订单量（region: 华东→东北，近3个月）",
+     "turns": [
+       {"q": "华东地区近3个月的订单量", "expect": {"kind": "answer", "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华东' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}},
+       {"q": "那东北呢", "expect": {"kind": "answer", "note_contains": ["华东→东北"], "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='东北' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}}
+     ]},
+
+    {"id": "fu04", "scenario": "entity_fallback", "role": "boss",
+     "desc": "词表外渠道实体（搜索不在 context 词表）→ 保守按新问题处理 → 无指标词被反问（不猜）",
+     "turns": [
+       {"q": "直播渠道近3个月的销售额", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.channel='直播' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}},
+       {"q": "换成搜索呢", "expect": {"kind": "clarify"}}
+     ]},
+
+    {"id": "fu05", "scenario": "entity_boundary_refusal", "role": "boss",
+     "desc": "词表边界：电商在 context 词表但不在 schema 取值内 → 消解成功 → 取值校验拒答（宁缺毋滥）",
+     "turns": [
+       {"q": "直播渠道近3个月的销售额", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.channel='直播' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}},
+       {"q": "换成电商呢", "expect": {"kind": "refusal", "note_contains": ["直播→电商"]}}
+     ]},
+
+    {"id": "fu06", "scenario": "guard_multi_entity", "role": "boss",
+     "desc": "歧义守卫（评审 D2）：上轮含多个 region 实体（华南+全国）→ 保守回退独立问题 → 无指标词被反问",
+     "turns": [
+       {"q": "上月华南地区和全国的销售额", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华南' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那华北呢", "expect": {"kind": "clarify", "note_contains": ["多个 region"]}}
+     ]},
+
+    {"id": "fu07", "scenario": "time_followup", "role": "boss",
+     "desc": "裸时间追问：那上个月呢（时间不在实体词表 → 按新问题 → 无指标词被反问，不猜指标）",
+     "turns": [
+       {"q": "最近6个月各品类销售额", "expect": {"kind": "answer", "gold_sql": "SELECT p.category AS category, SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE strftime('%Y-%m',o.order_date) >= '2026-04' GROUP BY 1"}},
+       {"q": "那上个月呢", "expect": {"kind": "clarify"}}
+     ]},
+
+    {"id": "fu08", "scenario": "time_followup", "role": "boss",
+     "desc": "时间追问带指标词：那本月销售额呢 → 独立问题正常出数（本月=2026-09，与数据锚点一致）",
+     "turns": [
+       {"q": "上月华东地区销售额", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华东' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那本月销售额呢", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu09", "scenario": "time_followup", "role": "boss",
+     "desc": "趋势后追单期：上月毛利额呢（含指标词 → 独立问题，毛利额 2026-09 总额）",
+     "turns": [
+       {"q": "近12个月每月毛利额", "expect": {"kind": "answer", "gold_sql": "SELECT strftime('%Y-%m',o.order_date) AS month, SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE strftime('%Y-%m',o.order_date) >= '2025-10' GROUP BY 1"}},
+       {"q": "上月毛利额呢", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu10", "scenario": "entity_then_time", "role": "boss",
+     "desc": "三连：实体切换（华南→华北）后接时间追问（上月销售额呢 → 独立问题出数）",
+     "turns": [
+       {"q": "最近3个月华南地区的毛利率", "expect": {"kind": "answer", "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华南' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}},
+       {"q": "那华北呢", "expect": {"kind": "answer", "note_contains": ["华南→华北"], "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华北' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}},
+       {"q": "上月销售额呢", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu11", "scenario": "cache_repeat", "role": "boss",
+     "desc": "缓存命中·原句复问：同 DSL 同 role → 第二次 from_cache=true",
+     "turns": [
+       {"q": "上月美妆品类的销售额", "expect": {"kind": "answer", "from_cache": false, "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE p.category='美妆' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "上月美妆品类的销售额", "expect": {"kind": "answer", "from_cache": true, "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE p.category='美妆' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu12", "scenario": "cache_repeat", "role": "boss",
+     "desc": "缓存命中·消解回环：那华北呢→那华南呢 消解回第一问原句 → 同指纹命中缓存（指代消解×缓存组合）",
+     "turns": [
+       {"q": "上月华南地区毛利率", "expect": {"kind": "answer", "from_cache": false, "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华南' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那华北呢", "expect": {"kind": "answer", "from_cache": false, "note_contains": ["华南→华北"], "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华北' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那华南呢", "expect": {"kind": "answer", "from_cache": true, "note_contains": ["华北→华南"], "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华南' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu13", "scenario": "cache_repeat", "role": "boss",
+     "desc": "缓存×角色隔离：同问题同 DSL 换角色 → 指纹含 role 必不命中（行级权限结果集不同，禁止跨角色复用）",
+     "turns": [
+       {"q": "上月华北地区销售额", "expect": {"kind": "answer", "from_cache": false, "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华北' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "上月华北地区销售额", "role": "north", "expect": {"kind": "answer", "from_cache": false, "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region IN ('华北', '东北') AND o.region='华北' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu14", "scenario": "cache_repeat", "role": "boss",
+     "desc": "缓存×时间窗：近3个月→近6个月→近3个月，第三问命中第一问（时间窗不同不误命中）",
+     "turns": [
+       {"q": "近3个月华南地区的销售额", "expect": {"kind": "answer", "from_cache": false, "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华南' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}},
+       {"q": "近6个月华南地区的销售额", "expect": {"kind": "answer", "from_cache": false, "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华南' AND strftime('%Y-%m',o.order_date) >= '2026-04'"}},
+       {"q": "近3个月华南地区的销售额", "expect": {"kind": "answer", "from_cache": true, "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华南' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}}
+     ]},
+
+    {"id": "fu15", "scenario": "clarify_flow", "role": "boss",
+     "desc": "澄清→续问（终结式澄清的恢复路径）：反问后用户直接答指标名 → 独立成问出数",
+     "turns": [
+       {"q": "最近卖得怎么样", "expect": {"kind": "clarify"}},
+       {"q": "销售额", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id"}}
+     ]},
+
+    {"id": "fu16", "scenario": "clarify_flow", "role": "boss",
+     "desc": "澄清→补全后重问：渠道表现模糊 → 用户给出完整问题 → 出数",
+     "turns": [
+       {"q": "上月各渠道表现如何", "expect": {"kind": "clarify"}},
+       {"q": "上月直播渠道的销售额", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.channel='直播' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu17", "scenario": "role_scope", "role": "south",
+     "desc": "行级权限×追问：south 用户追问华北 → 消解兜底 → 无指标词被反问（越权信息零泄漏）",
+     "turns": [
+       {"q": "上月各区域销售额", "expect": {"kind": "answer", "gold_sql": "SELECT o.region AS region, SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region IN ('华南') AND strftime('%Y-%m',o.order_date) >= '2026-09' GROUP BY 1"}},
+       {"q": "那华北呢", "expect": {"kind": "clarify", "note_contains": ["无同类型实体"]}}
+     ]},
+
+    {"id": "fu18", "scenario": "role_scope", "role": "north",
+     "desc": "行级权限：north 只见华北+东北两行",
+     "turns": [
+       {"q": "上月各区域销售额", "expect": {"kind": "answer", "gold_sql": "SELECT o.region AS region, SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region IN ('华北', '东北') AND strftime('%Y-%m',o.order_date) >= '2026-09' GROUP BY 1"}},
+       {"q": "那华东呢", "expect": {"kind": "clarify", "note_contains": ["无同类型实体"]}}
+     ]},
+
+    {"id": "fu19", "scenario": "role_followup", "role": "south",
+     "desc": "行级权限×指代消解：south 会话内 那食品呢 骨架继承 + 权限编译期注入",
+     "turns": [
+       {"q": "上月美妆品类的毛利率", "expect": {"kind": "answer", "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region IN ('华南') AND p.category='美妆' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那食品呢", "expect": {"kind": "answer", "note_contains": ["美妆→食品"], "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region IN ('华南') AND p.category='食品' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu20", "scenario": "no_context", "role": "boss",
+     "desc": "无上下文追问（评审 D3 可观测）：首问即 那华北呢 → 可见兜底说明 + 反问指标",
+     "turns": [
+       {"q": "那华北呢", "expect": {"kind": "clarify", "note_contains": ["无上轮上下文"]}}
+     ]},
+
+    {"id": "fu21", "scenario": "entity_switch", "role": "boss",
+     "desc": "区域追问：那华东呢（region: 西南→华东，订单量）",
+     "turns": [
+       {"q": "上月西南地区的订单量", "expect": {"kind": "answer", "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='西南' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那华东呢", "expect": {"kind": "answer", "note_contains": ["西南→华东"], "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华东' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu22", "scenario": "entity_switch", "role": "boss",
+     "desc": "品类追问：那食品呢（category: 美妆→食品，订单量近6个月）",
+     "turns": [
+       {"q": "近6个月美妆品类的订单量", "expect": {"kind": "answer", "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE p.category='美妆' AND strftime('%Y-%m',o.order_date) >= '2026-04'"}},
+       {"q": "那食品呢", "expect": {"kind": "answer", "note_contains": ["美妆→食品"], "gold_sql": "SELECT COUNT(DISTINCT o.order_id) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE p.category='食品' AND strftime('%Y-%m',o.order_date) >= '2026-04'"}}
+     ]},
+
+    {"id": "fu23", "scenario": "entity_switch", "role": "boss",
+     "desc": "指代消解三连问：华东→华南→华北，上下文逐轮滚动更新",
+     "turns": [
+       {"q": "上月华东地区销售额", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华东' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那华南呢", "expect": {"kind": "answer", "note_contains": ["华东→华南"], "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华南' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那华北呢", "expect": {"kind": "answer", "note_contains": ["华南→华北"], "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region='华北' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}}
+     ]},
+
+    {"id": "fu24", "scenario": "entity_switch", "role": "boss",
+     "desc": "换成句式：换成食品呢（category: 美妆→食品，毛利率近3个月）",
+     "turns": [
+       {"q": "近3个月美妆品类的毛利率", "expect": {"kind": "answer", "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE p.category='美妆' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}},
+       {"q": "换成食品呢", "expect": {"kind": "answer", "note_contains": ["美妆→食品"], "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE p.category='食品' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}}
+     ]},
+
+    {"id": "fu25", "scenario": "refusal_then_metric", "role": "boss",
+     "desc": "拒答后换合法指标续问：客服满意度（不存在）→ 拒答；那退货率呢（含指标词 → 独立问题出数）",
+     "turns": [
+       {"q": "上月客服满意度是多少", "expect": {"kind": "refusal"}},
+       {"q": "那退货率呢", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(CASE WHEN o.status='已退货' THEN oi.quantity*oi.unit_price*(1-oi.discount) ELSE 0 END) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id"}}
+     ]},
+
+    {"id": "fu26", "scenario": "entity_type_guard", "role": "boss",
+     "desc": "跨维度类型守卫：上轮是渠道（直播），追问品类（那食品呢）→ 同类型实体不存在 → 兜底反问",
+     "turns": [
+       {"q": "上月直播渠道的毛利率", "expect": {"kind": "answer", "gold_sql": "SELECT (SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost)) / SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.channel='直播' AND strftime('%Y-%m',o.order_date) >= '2026-09'"}},
+       {"q": "那食品呢", "expect": {"kind": "clarify", "note_contains": ["无同类型实体"]}}
+     ]},
+
+    {"id": "fu27", "scenario": "entity_switch", "role": "boss",
+     "desc": "品类追问换指标：那美妆呢（category: 食品→美妆，毛利额近3个月）",
+     "turns": [
+       {"q": "食品品类近3个月的毛利额", "expect": {"kind": "answer", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE p.category='食品' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}},
+       {"q": "那美妆呢", "expect": {"kind": "answer", "note_contains": ["食品→美妆"], "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) - SUM(oi.quantity*p.supply_cost) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE p.category='美妆' AND strftime('%Y-%m',o.order_date) >= '2026-07'"}}
+     ]},
+
+    {"id": "fu28", "scenario": "clarify_suspend", "role": "boss", "suspend": true,
+     "desc": "澄清挂起/恢复（E4②）：interrupt 挂起不出答案 → Command(resume) 续跑出数，澄清内容并入问题",
+     "turns": [
+       {"q": "最近卖得怎么样", "expect": {"kind": "suspend"}},
+       {"q": "销售额", "resume": true, "expect": {"kind": "answer", "merged_contains": "用户澄清", "gold_sql": "SELECT SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id"}}
+     ]},
+
+    {"id": "fu29", "scenario": "clarify_suspend", "role": "boss", "suspend": true,
+     "desc": "澄清挂起/恢复×维度分解：渠道表现模糊 → 挂起 → 澄清为销售额 → 渠道分解出数",
+     "turns": [
+       {"q": "上月各渠道表现如何", "expect": {"kind": "suspend"}},
+       {"q": "销售额", "resume": true, "expect": {"kind": "answer", "merged_contains": "用户澄清", "gold_sql": "SELECT o.channel AS channel, SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE strftime('%Y-%m',o.order_date) >= '2026-09' GROUP BY 1"}}
+     ]},
+
+    {"id": "fu30", "scenario": "cache_role_isolation", "role": "boss",
+     "desc": "三角色同题缓存隔离：boss→south→boss，第三问命中第一问（同 role 才复用，中间 south 不串）",
+     "turns": [
+       {"q": "上月各区域销售额", "expect": {"kind": "answer", "from_cache": false, "gold_sql": "SELECT o.region AS region, SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE strftime('%Y-%m',o.order_date) >= '2026-09' GROUP BY 1"}},
+       {"q": "上月各区域销售额", "role": "south", "expect": {"kind": "answer", "from_cache": false, "gold_sql": "SELECT o.region AS region, SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE o.region IN ('华南') AND strftime('%Y-%m',o.order_date) >= '2026-09' GROUP BY 1"}},
+       {"q": "上月各区域销售额", "expect": {"kind": "answer", "from_cache": true, "gold_sql": "SELECT o.region AS region, SUM(oi.quantity*oi.unit_price*(1-oi.discount)) AS value FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN products p ON oi.product_id=p.product_id JOIN customers c ON o.customer_id=c.customer_id WHERE strftime('%Y-%m',o.order_date) >= '2026-09' GROUP BY 1"}}
+     ]}
+  ]
+}

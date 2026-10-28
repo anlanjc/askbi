@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AskBI 问数引擎</title>
+<script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel2: #1e2230; --line: #2a2f3f;
+    --text: #e6e9f2; --dim: #8b93a7; --acc: #4f8cff; --ok: #3ecf8e; --warn: #ffb454; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.65 "Segoe UI", "Microsoft YaHei", sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  header .spacer { flex: 1; }
+  select, button, input { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font-size: 13px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .q { align-self: flex-end; max-width: 70%; background: #2b4a7a; padding: 10px 14px; border-radius: 12px 12px 2px 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; max-width: 92%; }
+  .card h3 { font-size: 14px; margin-bottom: 8px; color: var(--acc); }
+  .summary { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+  .narrative { color: #c9d2e6; white-space: pre-wrap; }
+  table { border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 5px 10px; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  th { background: var(--panel2); }
+  details { margin: 8px 0; }
+  summary { cursor: pointer; color: var(--dim); font-size: 12.5px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; font-size: 12px; margin: 8px 0; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; margin-right: 6px; }
+  .badge.ok { background: rgba(62,207,142,.15); color: var(--ok); }
+  .badge.warn { background: rgba(255,180,84,.15); color: var(--warn); }
+  .badge.err { background: rgba(255,107,107,.15); color: var(--err); }
+  .options button { margin: 4px 6px 0 0; }
+  #inputbar { display: flex; gap: 10px; padding: 14px 20px; background: var(--panel); border-top: 1px solid var(--line); }
+  #inputbar input { flex: 1; }
+  #samples { padding: 0 20px 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+  #samples button { font-size: 12px; color: var(--dim); }
+  #side { width: 340px; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
+  #side h2 { font-size: 13px; color: var(--dim); padding: 12px 16px 6px; text-transform: uppercase; letter-spacing: 1px; }
+  #pipeline { padding: 4px 16px 8px; display: flex; flex-direction: column; gap: 6px; }
+  .stage { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--line); opacity: .45; }
+  .stage.active { opacity: 1; border-color: var(--acc); }
+  .stage .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .stage.active .dot { background: var(--acc); box-shadow: 0 0 8px var(--acc); }
+  .stage .name { flex: 1; font-size: 13px; }
+  .stage .st { font-size: 11px; color: var(--dim); }
+  #log { flex: 1; overflow-y: auto; padding: 6px 16px 16px; font-size: 11.5px; color: var(--dim); font-family: Consolas, monospace; }
+  #log .l { padding: 2px 0; border-bottom: 1px dashed var(--line); word-break: break-all; }
+  #cost { padding: 8px 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>AskBI 问数引擎</h1>
+  <span class="sub">多 Agent 对话式经营分析 · NL2DSL2SQL · 数值质检闭环</span>
+  <span class="spacer"></span>
+  <label class="sub">角色（行级权限）</label>
+  <select id="role">
+    <option value="boss">老板（全区域）</option>
+    <option value="south">华南运营（仅华南）</option>
+    <option value="north">北方区（华北+东北）</option>
+  </select>
+</header>
+<main>
+  <div id="chat">
+    <div id="messages">
+      <div class="card">
+        <h3>👋 问数示例</h3>
+        <div class="narrative">问我经营数据的问题，例如「上月华南哪个品类毛利率最低，为什么下滑？」<br>
+        我会：<b>澄清歧义 → 生成受控查询 → 沙箱执行 → 归因下钻 → 数值质检</b>，全部数字可溯源。<br>
+        支持<b>多轮追问</b>：先问「上月华南地区的毛利率」，再问「那华北呢」——骨架自动继承；重复提问会显示 <b>⚡ 缓存命中</b>徽章。<br>
+        切换右上角角色可以体验<b>行级权限</b>（切换即新会话）；右边面板是 agent 实时执行过程。</div>
+      </div>
+    </div>
+    <div id="samples"></div>
+    <div id="inputbar">
+      <input id="q" placeholder="例如：近12个月销售额趋势怎么样？" autocomplete="off">
+      <button class="primary" id="ask">提问</button>
+    </div>
+  </div>
+  <div id="side">
+    <h2>Agent 流水线</h2>
+    <div id="pipeline"></div>
+    <h2>执行日志</h2>
+    <div id="log"></div>
+    <div id="cost">token 用量：等待任务…</div>
+  </div>
+</main>
+<script>
+const STAGES = [
+  ["router", "预算路由"], ["clarifier", "意图澄清"], ["sql_agent", "NL→DSL→SQL"],
+  ["executor", "沙箱执行"], ["insight", "归因解读"], ["qa", "数值质检"], ["finalizer", "组装输出"],
+];
+const SAMPLES = [
+  "上月华南哪个品类毛利率最低，为什么下滑？",
+  "近12个月销售额趋势",
+  "各渠道最近3个月的客单价",
+  "上月退货率最高的前5个子类",
+  "最近卖得怎么样",
+  "上月华南地区的毛利率",
+  "那华北呢",
+  "那美妆呢",
+];
+const ST_CN = { routed: "已路由", clarified: "清晰", needs_clarification: "需澄清", refused: "拒答",
+  sql_ready: "SQL就绪", sql_failed: "执行失败", executed: "已执行", insighted: "已解读",
+  qa_passed: "质检通过", qa_failed: "质检打回", done: "完成" };
+
+const pipeline = document.getElementById("pipeline");
+STAGES.forEach(([id, label]) => {
+  const div = document.createElement("div");
+  div.className = "stage"; div.id = "st-" + id;
+  div.innerHTML = `<span class="dot"></span><span class="name">${label}<span style="color:var(--dim)"> · ${id}</span></span><span class="st"></span>`;
+  pipeline.appendChild(div);
+});
+
+const samplesEl = document.getElementById("samples");
+SAMPLES.forEach(s => {
+  const b = document.createElement("button");
+  b.textContent = s;
+  b.onclick = () => { document.getElementById("q").value = s; ask(); };
+  samplesEl.appendChild(b);
+});
+
+function resetPipeline() {
+  STAGES.forEach(([id]) => {
+    const el = document.getElementById("st-" + id);
+    el.className = "stage"; el.querySelector(".st").textContent = "";
+  });
+  document.getElementById("log").innerHTML = "";
+}
+function setStage(node, status) {
+  const el = document.getElementById("st-" + node);
+  if (!el) return;
+  el.className = "stage active";
+  el.querySelector(".st").textContent = status ? (ST_CN[status] || status) : "运行中…";
+}
+function logEvent(ev) {
+  const el = document.getElementById("log");
+  const line = document.createElement("div");
+  line.className = "l";
+  const data = ev.data ? JSON.stringify(ev.data) : "";
+  line.textContent = `[${ev.node}] ${ev.type} ${data.length > 160 ? data.slice(0, 160) + "…" : data}`;
+  el.prepend(line);
+}
+
+function addMsg(cls, html) {
+  const m = document.getElementById("messages");
+  const div = document.createElement("div");
+  div.className = cls;
+  div.innerHTML = html;
+  m.appendChild(div);
+  m.scrollTop = m.scrollHeight;
+  return div;
+}
+
+function fmtNum(v) {
+  if (v == null) return "";
+  if (typeof v === "number") return Math.abs(v) >= 1000 ? v.toLocaleString("zh-CN", {maximumFractionDigits: 2}) : String(Math.round(v * 100) / 100);
+  return String(v);
+}
+
+function renderAnswer(a) {
+  if (a.kind === "clarify") {
+    const opts = (a.options || []).map(o => `<button onclick="useOption(this)">${o}</button>`).join("");
+    return `<div class="card"><h3>🤔 需要澄清</h3><div class="summary">${a.message}</div><div class="options">${opts}</div></div>`;
+  }
+  if (a.kind === "refusal" || a.kind === "error") {
+    return `<div class="card"><h3>${a.kind === "refuse" ? "🚫" : "⚠️"} ${a.kind === "refusal" ? "拒答" : "出错了"}</h3><div class="narrative">${a.message}</div></div>`;
+  }
+  let html = `<div class="card"><h3>📊 回答</h3><div class="summary">${a.summary || ""}</div>`;
+  if (a.narrative) html += `<div class="narrative">${a.narrative}</div>`;
+  if (a.chart) html += `<div id="chart-${Date.now()}" class="chartbox"></div>`;
+  if (a.table && a.table.rows && a.table.rows.length) {
+    const t = a.table;
+    html += `<details open><summary>数据表（${t.rows.length} 行）</summary><table><thead><tr>${t.columns.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>`;
+    t.rows.slice(0, 30).forEach(r => { html += `<tr>${r.map(v => `<td>${fmtNum(v)}</td>`).join("")}</tr>`; });
+    html += `</tbody></table></details>`;
+  }
+  if (a.sql) html += `<details><summary>SQL 与口径</summary><pre>${a.sql}</pre><div class="narrative" style="font-size:12.5px;color:var(--dim)">${a.caliber || ""}</div></details>`;
+  if (a.qa) {
+    const cls = a.qa.passed ? "ok" : "err";
+    html += `<details ${a.qa.passed ? "" : "open"}><summary>质检报告</summary>
+      <span class="badge ${cls}">${a.qa.passed ? "数值核验通过" : "核验未通过"}</span>
+      <span class="badge">核验数字 ${a.qa.numbers_checked} 个</span>
+      ${(a.qa.deterministic_issues || []).map(i => `<div style="color:var(--err);font-size:12px">• ${i}</div>`).join("")}
+      ${(a.qa.llm_issues || []).map(i => `<div style="color:var(--warn);font-size:12px">• ${i}</div>`).join("")}</details>`;
+  }
+  if (a.data_badge) {
+    const b = a.data_badge;
+    html += `<div style="margin-top:6px">
+      ${b.from_cache ? `<span class="badge ok" title="同 DSL 同角色的查询指纹命中缓存，直接回放未落沙箱">⚡ 缓存命中</span>` : ""}
+      <span class="badge ${b.truncated || b.degraded ? "warn" : "ok"}">数据完整度 ${b.truncated ? "截断" : "完整"}</span>
+      <span class="badge">耗时 ${b.elapsed_ms ?? "-"} ms</span></div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function embedChart(a) {
+  if (!a.chart) return;
+  const boxes = document.querySelectorAll(".chartbox");
+  const box = boxes[boxes.length - 1];
+  if (box) vegaEmbed(box, a.chart, {actions: false, theme: "dark"});
+}
+
+window.useOption = function (btn) {
+  document.getElementById("q").value = btn.textContent;
+  ask();
+};
+
+// ---- 多轮会话（session_id 驱动指代消解；角色切换视为新会话）----
+let SESSION_ID = sessionStorage.getItem("askbi_sid");
+if (!SESSION_ID) {
+  SESSION_ID = "web-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  sessionStorage.setItem("askbi_sid", SESSION_ID);
+}
+let pendingThread = null;   // 澄清挂起（E4②）：clarify_pending 推来的 thread_id，恢复时随问携带
+
+function newSession(reason) {
+  SESSION_ID = "web-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  sessionStorage.setItem("askbi_sid", SESSION_ID);
+  pendingThread = null;
+  if (reason) addMsg("", `<div class="card" style="border-style:dashed"><div class="narrative" style="color:var(--dim)">🔄 ${reason}，已开始新会话（多轮上下文与缓存按新角色隔离）</div></div>`);
+}
+document.getElementById("role").addEventListener("change", e => {
+  newSession(`角色已切换为「${e.target.selectedOptions[0].text}」`);
+});
+
+let busy = false;
+async function ask() {
+  const input = document.getElementById("q");
+  const q = input.value.trim();
+  if (!q || busy) return;
+  busy = true;
+  document.getElementById("ask").disabled = true;
+  input.value = "";
+  addMsg("q", q);
+  resetPipeline();
+
+  try {
+    const resp = await fetch("/api/ask", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        question: q, role: document.getElementById("role").value, session_id: SESSION_ID,
+        thread_id: pendingThread || "", resume: !!pendingThread,   // 澄清挂起恢复（E4②）
+      }),
+    });
+    pendingThread = null;
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", finalMsg = null;
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream: true});
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        if (!frame.startsWith("data: ")) continue;
+        const msg = JSON.parse(frame.slice(6));
+        if (msg.type === "node_done") setStage(msg.node, msg.status);
+        else if (msg.type === "event") {
+          logEvent(msg);
+          if (msg.node === "followup")   // 指代消解说明在聊天区可见（可观测，不静默改写）
+            addMsg("", `<div class="card" style="border-style:dashed"><div class="narrative" style="color:var(--dim)">🔗 ${msg.message}</div></div>`);
+        }
+        else if (msg.type === "clarify_pending") {   // 挂起：不出 final，等用户澄清后恢复
+          pendingThread = msg.thread_id;
+          const opts = (msg.options || []).map(o => `<button onclick="useOption(this)">${o}</button>`).join("");
+          addMsg("", `<div class="card"><h3>⏸️ 需要澄清（会话已挂起）</h3><div class="summary">${msg.question || ""}</div><div class="options">${opts}</div></div>`);
+        }
+        else if (msg.type === "error") addMsg("", `<div class="card"><h3>⚠️ 出错</h3><div class="narrative">${msg.message}</div></div>`);
+        else if (msg.type === "final") finalMsg = msg;
+      }
+    }
+    if (finalMsg) {
+      addMsg("", renderAnswer(finalMsg.answer));
+      embedChart(finalMsg.answer);
+      const u = finalMsg.usage || {};
+      const total = Object.values(u).reduce((s, x) => s + (x.prompt_tokens || 0) + (x.completion_tokens || 0), 0);
+      document.getElementById("cost").textContent =
+        `最近任务：${finalMsg.elapsed_ms} ms · ${total} tokens · ${Object.keys(u).join("/") || "无LLM调用"}`;
+    }
+  } catch (e) {
+    addMsg("", `<div class="card"><h3>⚠️ 连接失败</h3><div class="narrative">${e}</div></div>`);
+  } finally {
+    busy = false;
+    document.getElementById("ask").disabled = false;
+  }
+}
+
+document.getElementById("ask").onclick = ask;
+document.getElementById("q").addEventListener("keydown", e => { if (e.key === "Enter") ask(); });
+</script>
+</body>
+</html>

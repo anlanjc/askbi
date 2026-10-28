@@ -163,3 +163,22 @@ tests/          # 76 项测试：守卫/编译/解析/端到端/API/QA/缓存/�
 ## 澄清挂起/恢复（E4② 原创，默认关闭）
 
 "反问用户"从终结态升级为 **LangGraph interrupt 挂起点**：图在澄清点落盘、用户答案经 `Command(resume=...)` 注入后从断点续跑到出数（mock 实测：挂起→恢复→正确出数，问题并入澄清内容）。`CLARIFY_SUSPEND_ENABLED=1` 开启（关闭时原行为零变化）；API 端到端已通（thread_id + resume → clarify_pending SSE → 恢复出数）——装配三坑见 `docs/clarify_suspend_adr.md`。5 项测试（全量 77 绿）。
+
+## 多数据源接入（语义层注册表，AB-3）
+
+语义层不是硬编码：**维度/指标/取值白名单/NL 词表全部是可注册数据**（`app/data/registry.py` 的 `DatasetSpec`），编译器、提示词、DSL 校验、缓存指纹从 spec 取值，上层（图/节点/QA/评测 runner/MCP）零感知。仓库内置两套数据源自证"换数据源不改上层"：
+
+| | ecommerce（默认） | coffee（数据集 B） |
+|---|---|---|
+| 业务域 | 电商交易（orders/order_items/products/customers） | 线下连锁咖啡（tickets/ticket_lines/stores/skus） |
+| 指标集 | 9 个（含退货率/净销售额） | 7 个（含消费会员数，不含退货类） |
+| 维度 | 品类/渠道/会员等级… | 门店/店型/细分品类/堂食·外带·外卖… |
+| 业务故事 | 美妆促销拉低毛利率、直播占比上升 | **外卖占比逐月上升**（15%→45%）、烘焙毛利率高于饮品 |
+
+```bash
+python scripts/gen_data_b.py                # 生成 B 库（~5 万行小票明细，固定种子）
+DATASET=coffee python scripts/run_eval.py --dataset eval/dataset_b.json   # B 集评测（mock 26/26）
+DATASET=coffee python -m uvicorn app.api.main:app            # 整个服务切到咖啡数据源
+```
+
+切换 = 一个环境变量（`DATASET=coffee`，默认 `ecommerce`）；同 DSL 不同源**缓存互不命中**（数据集标识参与指纹，版本探测 SQL 也随 spec 走）。默认数据集行为逐位不变：95 项既有测试零改动全绿、v1/v2 双评测集 mock 100% 重跑作为回归裁判。设计决策、spec 与全局的边界划分、三个失败模式见 `docs/registry_adr.md`；15 项测试在 `tests/test_registry.py`（含同问题双数据源全链路与缓存隔离）。

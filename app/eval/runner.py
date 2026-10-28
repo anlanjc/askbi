@@ -57,6 +57,12 @@ def judge_query(answer: dict, gold_sql: str) -> tuple[bool, str]:
     a, b = _canonical(got["rows"], got.get("columns", [])), _canonical(gold.rows, gold.columns)
     if len(got.get("columns", [])) != len(gold.columns):
         return False, f"列数不符：{len(got.get('columns', []))} vs {len(gold.columns)}"
+    # 列序无关：真实模型会产生维度顺序漂移（如 [channel,month] vs 金标 [month,channel]），
+    # 列集合相同但顺序不同时按列名重排后比对——语义等价的答案不应因列序被判错
+    got_cols, gold_cols = list(got.get("columns", [])), list(gold.columns)
+    if sorted(got_cols) == sorted(gold_cols) and got_cols != gold_cols:
+        perm = [got_cols.index(c) for c in gold_cols]
+        a = sorted(tuple(row[p] for p in perm) for row in got["rows"])
     if a == b:
         return True, ""
     # top-k 等价：『哪个X最…』类问题，模型返回 gold 排序后的前 k 行即语义等价

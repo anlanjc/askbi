@@ -66,3 +66,23 @@ async def test_full_route_uses_insight(db_path):
     state = await run_ask("为什么上月美妆品类毛利率下滑了", role="boss")
     assert state["depth"] == "full"
     assert "insight" in (state.get("usage") or {})
+
+
+def test_judge_column_order_insensitive():
+    """回归：真实模型维度顺序漂移（[value,month,channel] vs 金标 [channel,month,value]）不应判错。
+
+    v2-078 根因：judge 按行元组比对受列序影响；列集合相同+按列名重排后一致 = 语义等价。
+    """
+    from app.eval.runner import judge_query
+
+    gold_sql = (
+        "SELECT '直播' AS channel, '2026-09' AS month, 1.0 AS value FROM (SELECT 1) "
+        "UNION ALL SELECT '官网', '2026-09', 2.0 FROM (SELECT 1)"
+    )
+    answer = {
+        "kind": "answer",
+        "table": {"columns": ["value", "month", "channel"],
+                  "rows": [[1.0, "2026-09", "直播"], [2.0, "2026-09", "官网"]]},
+    }
+    ok, detail = judge_query(answer, gold_sql)
+    assert ok, detail

@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..config import get_settings
 from .dsl import QueryDSL, TimeRange, compile_sql
-from .metrics import METRICS
+from .registry import DatasetSpec
 from .sandbox import Sandbox
 
 
@@ -41,37 +40,42 @@ class DrillDownFacts:
         }
 
 
-def _parse_window(tr: TimeRange) -> tuple[str, str]:
+def _parse_window(tr: TimeRange, spec: DatasetSpec) -> tuple[str, str]:
     """把 DSL 时间条件解析为 (当前月, 上一个自然月)，仅支持按月粒度。"""
     if tr.mode == "last_n_months" and tr.n == 1:
-        cur = get_settings().generator_end_month
+        cur = spec.end_month
     elif tr.mode == "between" and tr.start and tr.end and tr.start == tr.end:
         cur = tr.start
     else:
         # 兜底：无法定位单月时，取数据集最后一个月（并在事实中标注）
-        cur = get_settings().generator_end_month
+        cur = spec.end_month
     y, m = int(cur[:4]), int(cur[5:7])
     pm, py = (m - 1, y) if m > 1 else (12, y - 1)
     return cur, f"{py:04d}-{pm:02d}"
 
 
-async def drill_down(dsl: QueryDSL, role: str) -> DrillDownFacts:
+async def drill_down(dsl: QueryDSL, role: str, spec: DatasetSpec | None = None) -> DrillDownFacts:
     """计算主指标的环比变化与维度贡献分解。
 
+    spec 缺省为默认数据集（行为不变）；非默认数据集的分解维度由 spec.drill_dims 声明。
     贡献定义（加法型指标）：该维度成员的指标值变化量；比率型指标（毛利率等）
     用成员毛利额变化与收入结构近似解释——这里统一采用"成员值变化量"排序，
     并在 breakdown 中同时给出成员当前值与变化，避免过度建模。
     """
-    metric = METRICS[dsl.metric]
-    cur_m, prev_m = _parse_window(dsl.time)
+    if spec is None:
+        from .registry import DEFAULT_SPEC  # 延迟导入保持默认路径轻量
+
+        spec = DEFAULT_SPEC
+    metric = spec.metrics[dsl.metric]
+    cur_m, prev_m = _parse_window(dsl.time, spec)
 
     async def _one(month: str) -> float | None:
         q = dsl.model_copy(deep=True)
         q.dimensions = []
         q.time = TimeRange(mode="between", start=month, end=month)
         q.limit = 1
-        sql, _ = compile_sql(q, role=role)
-        res = await Sandbox().execute(sql)
+        sql, _ = compile_sql(q, role=role, spec=spec)
+        res = await Sandbox(db_path=spec.db_abs_path).execute(sql)
         return float(res.rows[0][0]) if res.rows and res.rows[0][0] is not None else None
 
     cur_v, prev_v = await _one(cur_m), await _one(prev_m)
@@ -86,7 +90,7 @@ async def drill_down(dsl: QueryDSL, role: str) -> DrillDownFacts:
     )
 
     # 维度分解：在 DSL 既有过滤条件内，按维度看成员级变化
-    for dim in ("category", "channel", "region"):
+    for dim in spec.drill_dims:
         if dsl.filters and any(f.field == dim for f in dsl.filters):
             continue
         rows: list[dict] = []
@@ -95,8 +99,8 @@ async def drill_down(dsl: QueryDSL, role: str) -> DrillDownFacts:
             q.dimensions = [dim]
             q.time = TimeRange(mode="between", start=month, end=month)
             q.limit = 50
-            sql, _ = compile_sql(q, role=role)
-            res = await Sandbox().execute(sql)
+            sql, _ = compile_sql(q, role=role, spec=spec)
+            res = await Sandbox(db_path=spec.db_abs_path).execute(sql)
             key = res.columns.index(dim)
             for r in res.rows:
                 member = r[key]
@@ -127,8 +131,8 @@ async def drill_down(dsl: QueryDSL, role: str) -> DrillDownFacts:
     q.dimensions = ["month"]
     q.time = TimeRange(mode="last_n_months", n=12)
     q.limit = 12
-    sql, _ = compile_sql(q, role=role)
-    res = await Sandbox().execute(sql)
+    sql, _ = compile_sql(q, role=role, spec=spec)
+    res = await Sandbox(db_path=spec.db_abs_path).execute(sql)
     for r in res.rows:
         facts.month_series.append((str(r[0]), float(r[1])))
     facts.month_series.sort(key=lambda x: x[0])

@@ -14,8 +14,8 @@ from fastapi.staticfiles import StaticFiles
 
 from ..agents.graph import get_graph
 from ..config import get_settings
-from ..data.metrics import METRICS
-from ..data.schema import DIMENSIONS, DIMENSION_VALUES, schema_prompt
+from ..data.registry import get_spec
+from ..data.schema import schema_prompt
 from .schemas import AskRequest
 from .task_store import get_task_store
 
@@ -151,10 +151,11 @@ async def task_detail(task_id: str):
 
 @app.get("/api/schema")
 async def schema():
+    spec = get_spec(get_settings().dataset)
     return {
-        "schema": schema_prompt(),
-        "dimensions": {k: DIMENSION_VALUES.get(k) for k in DIMENSIONS},
-        "metrics": {mid: {"name": m.name, "unit": m.unit, "caliber": m.caliber} for mid, m in METRICS.items()},
+        "schema": schema_prompt(spec),
+        "dimensions": {k: spec.dimension_values.get(k) for k in spec.dimensions},
+        "metrics": {mid: {"name": m.name, "unit": m.unit, "caliber": m.caliber} for mid, m in spec.metrics.items()},
         "roles": {"boss": "全区域", "south": "仅华南", "north": "华北+东北"},
     }
 
@@ -168,8 +169,9 @@ async def metrics():
 @app.get("/api/health")
 async def health():
     s = get_settings()
-    db_ok = s.db_abs_path.exists()
-    return {"status": "ok", "db": str(s.db_abs_path), "db_exists": db_ok, "llm": s.llm_provider}
+    db = get_spec(s.dataset).db_abs_path
+    db_ok = db.exists()
+    return {"status": "ok", "db": str(db), "db_exists": db_ok, "llm": s.llm_provider}
 
 
 # 静态前端（放最后，避免吞掉 /api 路由）

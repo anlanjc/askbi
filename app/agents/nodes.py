@@ -18,11 +18,11 @@ from ..config import get_settings
 from ..data.analytics import drill_down
 from ..data.dsl import (
     CompileError,
-    QueryDSL,
+    build_dsl,
     compile_sql,
     validate_filter_values,
 )
-from ..data.metrics import METRICS
+from ..data.registry import get_spec
 from ..data.schema import schema_prompt
 from ..llm.base import ChatRequest, LLMError, LLMResponse
 from ..llm.factory import get_llm
@@ -93,6 +93,7 @@ def route_node(state: GraphState) -> dict:
 
 
 async def clarifier_node(state: GraphState) -> dict:
+    spec = get_spec(get_settings().dataset)
     system = (
         "你是数据分析助手的意图澄清器。对用户问题判断：\n"
         "1) clear：指标与时间范围都可确定，可直接查询；\n"
@@ -110,7 +111,7 @@ async def clarifier_node(state: GraphState) -> dict:
         "属于 clear，绝不为相对时间反问；只对『指标不明』反问。\n"
         '严格返回 JSON: {"verdict":"clear|clarify|refuse","reason":"...","clarify_question":"...","options":["..."]}'
     )
-    payload = {"question": state["question"], "schema": schema_prompt()}
+    payload = {"question": state["question"], "schema": schema_prompt(spec), "dataset": spec.name}
     try:
         resp = await _call_llm("clarifier", system, payload)
     except LLMError as e:
@@ -157,6 +158,7 @@ async def clarifier_node(state: GraphState) -> dict:
 async def sql_agent_node(state: GraphState) -> dict:
     from ..data.metrics import metrics_prompt
 
+    spec = get_spec(get_settings().dataset)
     examples = get_example_store().search(state["question"], get_settings().rag_topk)
     system = (
         "你是 NL2DSL 引擎：把业务问题转为查询 DSL（JSON）。只允许使用 schema 中的维度与"
@@ -167,7 +169,7 @@ async def sql_agent_node(state: GraphState) -> dict:
         "都不设 limit——返回全部成员并按 order_by 排序，由排序表达意图。\n"
         "- 『哪个X最…』为 topn 且 dimensions 含 X；『趋势』dimensions 含 month。\n"
         "- 非分析请求/数据集不存在的维度值，返回 {\"error\": \"...\"} 说明原因。\n"
-        f"{schema_prompt()}\n{metrics_prompt()}\n"
+        f"{schema_prompt(spec)}\n{metrics_prompt(spec)}\n"
         '返回 DSL JSON：{"intent":"aggregate|breakdown|topn|trend|compare","metric":"id",'
         '"dimensions":[],"filters":[{"field":"","op":"=","value":""}],'
         '"time":{"mode":"all|last_n_months|between","n":1,"start":"","end":""},'
@@ -178,6 +180,7 @@ async def sql_agent_node(state: GraphState) -> dict:
         "mode": "repair" if state.get("sql_error") else "generate",
         "examples": [{"question": q, "dsl": d} for q, d, _s in examples],
         "error": state.get("sql_error"),
+        "dataset": spec.name,
     }
     try:
         resp = await _call_llm("sql_agent", system, payload)
@@ -204,7 +207,7 @@ async def sql_agent_node(state: GraphState) -> dict:
             "events": _merge_events(state, _event(state, "sql_agent", "refuse", raw)),
         }
     try:
-        dsl = QueryDSL(**raw)
+        dsl = build_dsl(raw, spec)
     except Exception as e:  # noqa: BLE001
         # 未知指标/维度/字段 → 拒答（数据集不支持）；其余校验错 → 带错误重试一次
         if "未知指标" in str(e) or "未知维度" in str(e) or "未知过滤字段" in str(e):
@@ -229,7 +232,7 @@ async def sql_agent_node(state: GraphState) -> dict:
             }
         usage = _record_usage({**state, "usage": usage}, "sql_agent", resp2)
         try:
-            dsl = QueryDSL(**_loose_json(resp2.content))
+            dsl = build_dsl(_loose_json(resp2.content), spec)
         except Exception as e2:  # noqa: BLE001
             return {
                 "usage": usage,
@@ -238,7 +241,7 @@ async def sql_agent_node(state: GraphState) -> dict:
                 "events": _merge_events(state, _event(state, "sql_agent", "refuse", {"error": str(e2)})),
             }
 
-    fv_problems = validate_filter_values(dsl)
+    fv_problems = validate_filter_values(dsl, spec)
     if fv_problems:
         return {
             "usage": usage,
@@ -248,7 +251,7 @@ async def sql_agent_node(state: GraphState) -> dict:
         }
 
     try:
-        sql, caliber = compile_sql(dsl, role=state.get("role", "boss"))
+        sql, caliber = compile_sql(dsl, role=state.get("role", "boss"), spec=spec)
     except CompileError as e:
         return {
             "usage": usage, "refusal": f"编译失败：{e}", "status": "refused",
@@ -275,12 +278,14 @@ async def sql_agent_node(state: GraphState) -> dict:
 async def executor_node(state: GraphState) -> dict:
     from ..data.sandbox import Sandbox
 
+    spec = get_spec(get_settings().dataset)
     # 查询缓存（E4③，cache_enabled 默认 False）：同 DSL 指纹命中直接回放，不落沙箱。
-    # 键含 role（行级权限改变结果集）；关闭时此分支整体跳过，行为与无缓存完全一致。
+    # 键含 role（行级权限改变结果集）与数据集标识（同 DSL 不同源不可跨缓存）；
+    # 关闭时此分支整体跳过，行为与无缓存完全一致。
     cache = get_query_cache()
     cache_key = None
     if cache.enabled and state.get("dsl") and state.get("sql"):
-        cache_key = fingerprint(state["dsl"], state.get("role", "boss"))
+        cache_key = fingerprint(state["dsl"], state.get("role", "boss"), spec.name)
         cached = cache.get(cache_key)
         if cached is not None:
             result = {**align_columns(cached, state["dsl"].get("dimensions") or []), "from_cache": True}
@@ -296,7 +301,7 @@ async def executor_node(state: GraphState) -> dict:
                 ),
             }
     try:
-        res = await Sandbox().execute(state["sql"])
+        res = await Sandbox(db_path=spec.db_abs_path).execute(state["sql"])
     except Exception as e:  # noqa: BLE001
         rc = state.get("repair_count", 0) + 1
         over = rc > get_settings().max_sql_repairs
@@ -347,15 +352,16 @@ _WHY_RE = re.compile(r"(为什么|原因|为何|下滑|增长|怎么回事|分�
 
 
 async def insight_node(state: GraphState) -> dict:
-    dsl = QueryDSL(**state["dsl"])
+    spec = get_spec(get_settings().dataset)
+    dsl = build_dsl(state["dsl"], spec)
     needs_drill = bool(_WHY_RE.search(state["question"])) or dsl.intent == "trend"
 
     if needs_drill and state.get("depth") == "full":
-        facts = (await drill_down(dsl, state.get("role", "boss"))).as_context()
+        facts = (await drill_down(dsl, state.get("role", "boss"), spec)).as_context()
     else:
         rows = state["result"]["rows"]
         facts = {
-            "metric": METRICS[dsl.metric].name,
+            "metric": spec.metrics[dsl.metric].name,
             "top_rows": [
                 dict(zip(state["result"]["columns"], r)) for r in rows[:5]
             ],
@@ -548,6 +554,7 @@ async def qa_node(state: GraphState) -> dict:
 
 
 def finalizer_node(state: GraphState) -> dict:
+    spec = get_spec(get_settings().dataset)
     if state.get("refusal"):
         answer = {"kind": "refusal", "message": state["refusal"]}
     elif state.get("clarify"):
@@ -555,7 +562,7 @@ def finalizer_node(state: GraphState) -> dict:
     else:
         result = state.get("result", {})
         dsl = state.get("dsl", {})
-        metric = METRICS.get(dsl.get("metric", "revenue"))
+        metric = spec.metrics.get(dsl.get("metric", "revenue"))
         single = None
         if not dsl.get("dimensions") and result.get("rows"):
             single = metric.fmt.format(result["rows"][0][-1]) if metric else str(result["rows"][0][-1])

@@ -47,13 +47,18 @@ def _load_dataset(path: Path | None = None) -> list[dict]:
     return json.loads(p.read_text(encoding="utf-8"))["items"]
 
 
-def judge_query(answer: dict, gold_sql: str) -> tuple[bool, str]:
+def judge_query(answer: dict, gold_sql: str, db_path=None) -> tuple[bool, str]:
+    """query 判分：gold 与生成 SQL 在同一库上执行比对。
+
+    db_path 缺省走 settings（默认数据集行为不变）；评测非默认数据集时
+    由 run() 传入该数据集的库路径，保证金标与线上执行同源。
+    """
     if answer.get("kind") != "answer":
         return False, f"未产出答案（{answer.get('kind')}）"
     got = answer.get("table") or {}
     if not got.get("rows"):
         return False, "结果为空"
-    gold = execute_sync(gold_sql)
+    gold = execute_sync(gold_sql, db_path=db_path)
     a, b = _canonical(got["rows"], got.get("columns", [])), _canonical(gold.rows, gold.columns)
     if len(got.get("columns", [])) != len(gold.columns):
         return False, f"列数不符：{len(got.get('columns', []))} vs {len(gold.columns)}"
@@ -95,6 +100,11 @@ async def run(
     if limit:
         items = items[:limit]
 
+    # 判分库随数据集走：settings.dataset 决定引擎与金标执行同源（默认数据集行为不变）
+    from ..data.registry import get_spec
+
+    judge_db = get_spec(settings.dataset).db_abs_path
+
     results = []
     for it in items:
         t0 = time.perf_counter()
@@ -104,7 +114,7 @@ async def run(
         kind = it["kind"]
         detail = ""
         if kind == "query":
-            ok, detail = judge_query(answer, it["gold_sql"])
+            ok, detail = judge_query(answer, it["gold_sql"], db_path=judge_db)
         elif kind == "refusal":
             ok = answer.get("kind") == "refusal"
             detail = "" if ok else f"期望拒答，得到 {answer.get('kind')}"

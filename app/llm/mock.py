@@ -3,6 +3,10 @@
 价值定位（写给面试官）：mock 不是玩具——它让 CI 能跑端到端回归，
 评测可以先在 mock 下验证流水线正确性，再切真实模型看质量增益。
 sql_agent 的规则解析器与 DSL 词表共用一套常量，不会漂移。
+
+多数据源：NL 词表（指标别名/维度关键词/取值域）全部来自当前数据集 spec
+（app/data/registry.py），payload 携带 dataset 标识（nodes.py 透传 settings.dataset）；
+payload 不带 dataset 时回退默认数据集——历史调用点行为不变。
 """
 
 from __future__ import annotations
@@ -18,6 +22,18 @@ def _payload(req: ChatRequest) -> dict:
         return json.loads(req.user)
     except Exception:
         return {"question": req.user}
+
+
+def _spec_of(p: dict):
+    """解析当前数据集 spec：payload.dataset 缺省 = 默认数据集（历史行为不变）。"""
+    name = p.get("dataset")
+    if not name:
+        from ..data.registry import DEFAULT_SPEC
+
+        return DEFAULT_SPEC
+    from ..data.registry import get_spec
+
+    return get_spec(name)
 
 
 class MockLLM(LLMClient):
@@ -40,10 +56,12 @@ _TIME_VAGUE = ["最近", "近期", "这阵子"]
 
 
 def _clarifier(p: dict) -> dict:
+    spec = _spec_of(p)
     q = p.get("question", "")
-    has_metric = any(a in q for m_aliases in _metric_aliases() for a in m_aliases)
-    has_dim = any(k in q for kws in _DIM_KEYWORDS.values() for k in kws) or any(
-        v in q for vals in _DIM_VALUES.values() for v in vals
+    has_metric = any(a in q for m_aliases in _metric_aliases(spec) for a in m_aliases)
+    dim_vals = _parser_dim_values(spec)
+    has_dim = any(k in q for kws in spec.dim_keywords.values() for k in kws) or any(
+        v in q for vals in dim_vals.values() for v in vals
     )
     # 预测未来：数据不可达 → 拒答而非编造
     if any(w in q for w in ("预测", "未来", "下个月", "下季度", "明年", "预计")):
@@ -89,25 +107,26 @@ def _clarifier(p: dict) -> dict:
 _NUM_CN = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "十二": 12}
 
 
-def _metric_aliases() -> list[list[str]]:
-    from ..data.metrics import METRICS
-
+def _metric_aliases(spec) -> list[list[str]]:
     out = []
-    for mid in ("gross_margin_rate", "gross_margin", "revenue", "net_revenue", "order_count",
-                "item_quantity", "avg_order_value", "refund_rate", "customer_count"):
-        out.append([METRICS[mid].name, *METRICS[mid].aliases])
+    order = spec.metric_parse_order or tuple(spec.metrics)
+    for mid in order:
+        m = spec.metrics[mid]
+        out.append([m.name, *m.aliases])
     return out
 
 
-def _detect_metric(q: str) -> str | None:
-    """别名->指标id 映射，长词优先匹配（保证"毛利率"不被"毛利"截胡）。"""
-    from ..data.metrics import METRICS
+def _parser_dim_values(spec) -> dict[str, list[str]]:
+    """解析器可提取取值的枚举维度：有 NL 关键词 且 声明了取值域 的维度。"""
+    return {d: spec.dimension_values[d] for d in spec.dim_keywords if d in spec.dimension_values}
 
-    order = ("gross_margin_rate", "gross_margin", "revenue", "net_revenue", "order_count",
-             "item_quantity", "avg_order_value", "refund_rate", "customer_count")
+
+def _detect_metric(q: str, spec) -> str | None:
+    """别名->指标id 映射，长词优先匹配（保证"毛利率"不被"毛利"截胡）。"""
+    order = spec.metric_parse_order or tuple(spec.metrics)
     alias2id: dict[str, str] = {}
     for mid in order:
-        m = METRICS[mid]
+        m = spec.metrics[mid]
         for a in [m.name, *m.aliases]:
             alias2id.setdefault(a, mid)
     ql = q.lower()
@@ -117,48 +136,38 @@ def _detect_metric(q: str) -> str | None:
     return None
 
 
-_DIM_KEYWORDS = {
-    "category": ["品类", "类别", "类目", "商品类"],
-    "subcategory": ["子类", "细分品类"],
-    "region": ["大区", "区域", "地区"],
-    "province": ["省份", "省"],
-    "city": ["城市"],
-    "channel": ["渠道"],
-    "member_level": ["会员等级", "会员"],
-}
-_DIM_VALUES = {
-    "region": ["华南", "华北", "华东", "华中", "西南", "西北", "东北"],
-    "category": ["数码", "服饰", "美妆", "家居", "食品", "运动"],
-    "channel": ["直播", "搜索", "推荐", "社交", "官网"],
-    "member_level": ["普通", "银卡", "金卡", "黑卡"],
-}
-
-
 def _sql_agent(p: dict) -> dict:
-    from ..data.dsl import Filter, OrderBy, QueryDSL, TimeRange, validate_filter_values
+    from ..data.dsl import build_dsl, validate_filter_values
 
+    spec = _spec_of(p)
     q = p.get("question", "")
-    dsl = _parse_question(q)
+    dsl = _parse_question(q, spec)
 
     # 规则解析失败 → 结构化报错，节点层会走修复/拒答路径
     try:
-        obj = QueryDSL(**dsl)
+        obj = build_dsl(dsl, spec)
     except Exception as e:  # noqa: BLE001
         return {"error": f"DSL 无效: {e}"}
-    problems = validate_filter_values(obj)
+    problems = validate_filter_values(obj, spec)
     if problems:
         return {"error": "; ".join(problems)}
     return obj.model_dump()
 
 
-def _parse_question(q: str) -> dict:
+def _parse_question(q: str, spec=None) -> dict:
+    if spec is None:
+        from ..data.registry import DEFAULT_SPEC
+
+        spec = DEFAULT_SPEC
+    dim_keywords = spec.dim_keywords
+    dim_values = _parser_dim_values(spec)
     ql = q.lower()
-    detected = _detect_metric(q)
+    detected = _detect_metric(q, spec)
     metric = detected or "revenue"
 
     dims: list[str] = []
     matched_kws: list[str] = []
-    for d, kws in _DIM_KEYWORDS.items():
+    for d, kws in dim_keywords.items():
         for k in kws:
             if k in q:
                 dims.append(d)
@@ -174,13 +183,14 @@ def _parse_question(q: str) -> dict:
         dims.append("category")
 
     # 「值+字段」式表达：华南地区 / 美妆品类 / 直播渠道 / 黑卡会员 —— 提取为过滤条件
+    # （取值提取关键词随数据集走：spec.filter_keywords）
     filters: list[dict] = []
-    field_kws = {"region": ("大区", "区域", "地区"), "category": ("品类", "类别", "类目"),
-                 "channel": ("渠道",), "member_level": ("会员",)}
     _STOP_PREFIX = {"各", "每", "该", "所有", "全部", "哪个", "哪些", "什么"}
-    _OTHER_KWS = {k for kws in _DIM_KEYWORDS.values() for k in kws}
-    for fname, kws in field_kws.items():
-        allowed = _DIM_VALUES[fname]
+    _OTHER_KWS = {k for kws in dim_keywords.values() for k in kws}
+    for fname, kws in spec.filter_keywords.items():
+        allowed = dim_values.get(fname)
+        if not allowed:
+            continue
         for kw in kws:
             for m in re.finditer(r"([\u4e00-\u9fa5]{1,3})" + kw, q):
                 raw = m.group(1)

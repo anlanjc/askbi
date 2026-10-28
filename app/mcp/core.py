@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import json
 
-from ..data.dsl import Filter, OrderBy, QueryDSL, TimeRange, compile_sql
-from ..data.metrics import METRICS
+from ..config import get_settings
+from ..data.dsl import build_dsl, compile_sql
+from ..data.registry import get_spec
 from ..data.sandbox import execute_sync
-from ..data.schema import DIMENSIONS, DIMENSION_VALUES
 
 TOOLS_SPEC = [
     {
@@ -49,31 +49,35 @@ TOOLS_SPEC = [
 
 
 def handle_tool(name: str, args: dict) -> str:
-    """同步核心：供 MCP server 与测试直接调用。"""
+    """同步核心：供 MCP server 与测试直接调用。数据集跟随 settings.dataset。"""
+    spec = get_spec(get_settings().dataset)
     if name == "list_metrics":
         return json.dumps(
-            {mid: {"name": m.name, "unit": m.unit, "caliber": m.caliber} for mid, m in METRICS.items()},
+            {mid: {"name": m.name, "unit": m.unit, "caliber": m.caliber} for mid, m in spec.metrics.items()},
             ensure_ascii=False,
         )
     if name == "describe_schema":
         return json.dumps(
             {
-                "dimensions": {k: DIMENSION_VALUES.get(k, "（连续值）") for k in DIMENSIONS},
-                "time_range": "2024-10 ~ 2026-09（月粒度）",
+                "dimensions": {k: spec.dimension_values.get(k, "（连续值）") for k in spec.dimensions},
+                "time_range": f"{spec.start_month} ~ {spec.end_month}（月粒度）",
             },
             ensure_ascii=False,
         )
     if name == "query_metric":
-        dsl = QueryDSL(
-            metric=args["metric"],
-            dimensions=args.get("dimensions") or [],
-            filters=[Filter(**f) for f in args.get("filters") or []],
-            time=TimeRange(**(args.get("time") or {"mode": "all"})),
-            order_by=OrderBy(metric=args["metric"], direction="desc"),
-            limit=args.get("limit") or 50,
+        dsl = build_dsl(
+            {
+                "metric": args["metric"],
+                "dimensions": args.get("dimensions") or [],
+                "filters": args.get("filters") or [],
+                "time": args.get("time") or {"mode": "all"},
+                "order_by": {"metric": args["metric"], "direction": "desc"},
+                "limit": args.get("limit") or 50,
+            },
+            spec,
         )
-        sql, caliber = compile_sql(dsl, role="boss")
-        res = execute_sync(sql)
+        sql, caliber = compile_sql(dsl, role="boss", spec=spec)
+        res = execute_sync(sql, db_path=spec.db_abs_path)
         return json.dumps(
             {
                 "sql": sql,

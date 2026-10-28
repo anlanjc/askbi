@@ -1,0 +1,33 @@
+"""API 请求/响应模型（pydantic v2）：边界即契约。"""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    role: Literal["boss", "south", "north"] = "boss"
+    session_id: str = ""   # 多轮指代消解用；留空视为独立单轮
+    thread_id: str = ""    # E4② 澄清挂起：同 thread 恢复；留空自动用 task id
+    resume: bool = False   # True 时 question 视为对挂起澄清的回答（Command(resume)）
+    # 留空则由预算路由自动决定；显式传入可覆盖（评测用）
+    depth: Literal["", "light", "full"] = ""
+
+
+class TaskSummary(BaseModel):
+    id: str
+    question: str
+    role: str
+    status: str
+    kind: str | None = None
+    created_at: str
+    elapsed_ms: float | None = None
+
+
+class TaskDetail(TaskSummary):
+    answer: dict[str, Any] | None = None
+    usage: dict[str, Any] | None = None
+    events: list[dict] | None = None

@@ -1,0 +1,205 @@
+{
+ "note": "数据集 B（线下连锁咖啡）评测集：金标由 compile_sql(spec=coffee) 生成（scripts/build_dataset_b.py 可重建/自检），判分执行库为 data/askbi_b.duckdb。构成：{'clarify': 2, 'drill': 3, 'query': 18, 'refusal': 3}；全部 main split（B 集用于多数据源回归验证，无调参流程）。",
+ "items": [
+  {
+   "id": "b-001",
+   "kind": "query",
+   "question": "上个月的销售额是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-002",
+   "kind": "query",
+   "question": "上月订单量有多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT t.ticket_id) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-003",
+   "kind": "query",
+   "question": "上月客单价是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) / NULLIF(COUNT(DISTINCT t.ticket_id), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-004",
+   "kind": "query",
+   "question": "上月毛利率是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT ((SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost))) / NULLIF((SUM(tl.quantity * tl.unit_price)), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-005",
+   "kind": "query",
+   "question": "上月消费会员数是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT t.member_id) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-006",
+   "kind": "query",
+   "question": "最近3个月销售额是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-007",
+   "kind": "query",
+   "question": "各品类销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT k.category AS category, SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE TRUE\nGROUP BY k.category\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-008",
+   "kind": "query",
+   "question": "最近3个月各渠道销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT t.channel AS channel, SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH)\nGROUP BY t.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-009",
+   "kind": "query",
+   "question": "各细分品类毛利率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT k.subcategory AS subcategory, ((SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost))) / NULLIF((SUM(tl.quantity * tl.unit_price)), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE TRUE\nGROUP BY k.subcategory\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-010",
+   "kind": "query",
+   "question": "销售额最高的门店",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT s.store_name AS store, SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE TRUE\nGROUP BY s.store_name\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-011",
+   "kind": "query",
+   "question": "客单价最低的店型",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT s.store_type AS store_type, (SUM(tl.quantity * tl.unit_price)) / NULLIF(COUNT(DISTINCT t.ticket_id), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE TRUE\nGROUP BY s.store_type\nORDER BY value ASC\nLIMIT 100"
+  },
+  {
+   "id": "b-012",
+   "kind": "query",
+   "question": "近6个月各渠道销售额趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', t.sale_date) AS month, t.channel AS channel, SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY strftime('%Y-%m', t.sale_date), t.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-013",
+   "kind": "query",
+   "question": "近6个月饮品品类销售额趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', t.sale_date) AS month, SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND k.category = '饮品'\nGROUP BY strftime('%Y-%m', t.sale_date)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-014",
+   "kind": "query",
+   "question": "外卖渠道上月销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND t.channel = '外卖'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-015",
+   "kind": "query",
+   "question": "华南地区上月毛利额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost)) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND s.region = '华南'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-016",
+   "kind": "query",
+   "question": "旗舰店店型最近3个月的销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH) AND s.store_type = '旗舰店'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-017",
+   "kind": "query",
+   "question": "2025年1月到6月的销售额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= '2025-01' AND strftime('%Y-%m', t.sale_date) <= '2025-06'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-018",
+   "kind": "query",
+   "question": "上月各渠道销售额",
+   "role": "south",
+   "split": "main",
+   "gold_sql": "SELECT t.channel AS channel, SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND s.region IN ('华南')\nGROUP BY t.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "b-019",
+   "kind": "drill",
+   "question": "为什么上月外卖渠道销售额增长",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "b-020",
+   "kind": "drill",
+   "question": "上个月整体毛利率为什么下滑",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "b-021",
+   "kind": "drill",
+   "question": "分析上月各渠道的销售额结构",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "b-022",
+   "kind": "clarify",
+   "question": "卖得怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "b-023",
+   "kind": "clarify",
+   "question": "上个月卖得怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "b-024",
+   "kind": "refusal",
+   "question": "预测下季度的销售额",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "b-025",
+   "kind": "refusal",
+   "question": "客户满意度怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "b-026",
+   "kind": "refusal",
+   "question": "写一段上月销售总结",
+   "role": "boss",
+   "split": "main"
+  }
+ ]
+}

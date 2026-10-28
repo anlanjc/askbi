@@ -85,7 +85,7 @@ python scripts/fault_inject.py --n 10                               # 故障注�
 python scripts/load_test.py                                         # 压测矩阵 12 点位
 ```
 
-v2 分层集：80 query / 12 归因 / 12 澄清 / 12 拒答，**金标一律由 `compile_sql` 生成**（`scripts/build_dataset_v2.py` 构建期自检：mock 解析器重答每道 query 题与金标同库比对），含行级权限 role 用例与"净销售额"口径题。v1 33 条保留为 smoke 回归集——**"33 条是回归集，不是 benchmark"是有意的工程判断**。
+v2 分层集：80 query / 12 归因 / 12 澄清 / 12 拒答，**金标一律由 `compile_sql` 生成**（`scripts/build_dataset_v2.py` 构建期自检：mock 解析器重答每道 query 题与金标同库比对），含行级权限 role 用例与"净销售额"口径题。真实模型口径（deepseek-v4-flash，2026-10-29）：全量 **94.8%**、拒答边界校准后子集全绿、holdout 盲测两轮 84.6%/100%（汇总见 [eval/report_openai_compatible_dataset_v2.md](eval/report_openai_compatible_dataset_v2.md)）。v1 33 条保留为 smoke 回归集——**"33 条是回归集，不是 benchmark"是有意的工程判断**。
 
 **真实模型结果**（deepseek-v4-flash-0731 @ DashScope 兼容接口）：v1 33 条 2026-10-26（下表）；v2 116 条 2026-10-29（`eval/report_openai_compatible_dataset_v2.md`）。
 

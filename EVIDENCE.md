@@ -26,8 +26,10 @@
 | 层 | 集合 | 数字 | 说明 |
 |---|---|---|---|
 | smoke 回归 | v1 33 条 | mock 100% / real 100%（10-26 口径） | 回归集不是 benchmark |
-| full 分层 | v2 116 条（80 query/12 归因/12 澄清/12 拒答，15 条 holdout） | mock **100%**（10-28） | 金标由 compile_sql 生成，构建期自检 mock 可答性 |
-| full real | v2 116 条 | 见 `eval/report_openai_compatible_dataset_v2.md` | 真实模型 deepseek-v4-flash，成本见报告 |
+| full 分层 | v2 116 条（80 query/12 归因/12 澄清/12 拒答，13 条 holdout） | mock **100%**（10-28） | 金标由 compile_sql 生成，构建期自检 mock 可答性 |
+| full real | v2 116 条 | **94.8%**（110/116，数值一致率 100%）；分类别 query 79/80 · drill 12/12 · clarify 12/12 · refusal 7/12 | 10-29，成本 560,550 token ≈ ¥1.7 |
+| 校准迭代 | refusal/clarify 子集 | clarifier prompt 增补 4 类 refuse 规则（**只用 main split 失败信号**）→ 两子集 **12/12 + 12/12** | holdout 不参与调参 |
+| holdout 盲测 | 13 条 | run1 84.6% / run2 **100%**（失败均为 drill 类运行间波动，主跑同题全 ✓） | 真实口径 ≈92.3%±波动 |
 | 多轮 | 30 条 64 轮 | **100%**（mock，缓存命中 4/4） | evidence/multiturn_report.md |
 | 故障注入 | 6 场景 ×10 | 零崩溃，全部诚实降级 | evidence/fault_injection.md |
 | 压测 | 12 点位矩阵 | 编排上限 110-124 QPS；300ms 模拟延迟下 P50≈1.2s≈4×LLM | evidence/load_test.md |

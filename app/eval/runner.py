@@ -125,6 +125,9 @@ async def run(
             "detail": detail, "elapsed_ms": round(elapsed, 1), "tokens": tokens,
             "answer_kind": answer.get("kind"), "number_consistent": num_ok,
             "role": it.get("role", "boss"),
+            # DSL/SQL 留痕：失败 case 无需重跑即可归因（此前为已知限制）
+            "dsl": state.get("dsl"),
+            "sql": state.get("sql"),
         })
         flag = "✓" if ok else "✗"
         print(f"  {flag} {it['id']} [{kind}] {it['question']}  {elapsed:.0f}ms {detail}")
@@ -182,7 +185,12 @@ def write_report(summary: dict, path: Path) -> None:
     for r in summary["results"]:
         nc = r["number_consistent"]
         nc_s = "-" if nc is None else ("✓" if nc else "✗")
-        lines.append(f"| {r['id']} | {'✓' if r['ok'] else '✗'} | {r['question']} | {r['elapsed_ms']:.0f} | {nc_s} | {r['detail']} |")
+        note = r["detail"]
+        if not r["ok"] and r.get("dsl"):
+            # 失败 case 附 DSL/SQL 留痕（截断），无需重跑即可归因
+            sql = (r.get("sql") or "").replace("\n", " ")[:160]
+            note += f" 〈DSL: {json.dumps(r['dsl'], ensure_ascii=False)[:180]}｜SQL: {sql}〉"
+        lines.append(f"| {r['id']} | {'✓' if r['ok'] else '✗'} | {r['question']} | {r['elapsed_ms']:.0f} | {nc_s} | {note} |")
     path.write_text("\n".join(lines), encoding="utf-8")
 
 

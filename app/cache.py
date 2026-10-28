@@ -28,29 +28,36 @@ import duckdb
 
 from .config import get_settings
 from .data.dsl import QueryDSL, _END_MONTH  # 与编译器共用同一时间锚点，避免两处漂移
+from .data.registry import DatasetSpec, get_spec
 
 # 指纹格式版本：规范化规则本身变化时递增，防止新旧语义混存
 _FINGERPRINT_VERSION = 1
 
+# semver 注入钩子（test_cache 依赖契约）：非 None 时直接作为编译语义版本参与指纹
 _COMPILE_SEMVER_CACHE: str | None = None
+# 正常路径的按数据集记忆化：semver = 各数据集指标表达式集合的短哈希
+_COMPILE_SEMVER_BY_DS: dict[str, str] = {}
 
 
-def _compile_semver() -> str:
-    """编译语义版本：对指标表达式集合做短哈希（评审 A1）。
+def _compile_semver(spec: DatasetSpec) -> str:
+    """编译语义版本：对数据集的指标表达式集合做短哈希（评审 A1）。
 
-    指标口径或编译器语义变更（开发者改 metrics.py/compile_sql）时，哈希变化
-    → 全部旧指纹失效。惰性计算一次并缓存。
+    指标口径或编译器语义变更（开发者改 metrics/compile_sql）时，哈希变化
+    → 该数据集全部旧指纹失效。按数据集分键惰性计算并缓存；
+    _COMPILE_SEMVER_CACHE 非 None 时为测试/运维显式注入，直接生效。
     """
-    global _COMPILE_SEMVER_CACHE
-    if _COMPILE_SEMVER_CACHE is None:
+    if _COMPILE_SEMVER_CACHE is not None:
+        return _COMPILE_SEMVER_CACHE
+    cached = _COMPILE_SEMVER_BY_DS.get(spec.name)
+    if cached is None:
         try:
-            from .data.metrics import METRICS
-            payload = json.dumps({k: getattr(m, "expr", str(m)) for k, m in METRICS.items()},
+            payload = json.dumps({k: getattr(m, "expr", str(m)) for k, m in spec.metrics.items()},
                                  sort_keys=True, ensure_ascii=False, default=str)
         except Exception:                     # noqa: BLE001 - 版本计算失败不阻断指纹
             payload = "unknown"
-        _COMPILE_SEMVER_CACHE = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
-    return _COMPILE_SEMVER_CACHE
+        cached = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+        _COMPILE_SEMVER_BY_DS[spec.name] = cached
+    return cached
 
 
 # ---------------- 指纹：规范化 DSL ----------------
@@ -63,7 +70,7 @@ def _shift_month(ym: str, k: int) -> str:
     return f"{total // 12:04d}-{total % 12 + 1:02d}"
 
 
-def _norm_time(t: dict) -> list[str] | None:
+def _norm_time(t: dict, end_month: str = _END_MONTH) -> list[str] | None:
     """时间条件归一为绝对月窗口 [start, end]；all（含退化写法）→ None。
 
     与 TimeRange.to_sql 语义对齐：last_n_months n 缺失/为 0 时编译为 TRUE，即 all。
@@ -72,7 +79,7 @@ def _norm_time(t: dict) -> list[str] | None:
     mode = t.get("mode", "all")
     if mode == "last_n_months" and t.get("n"):
         n = max(1, int(t["n"]))
-        return [_shift_month(_END_MONTH, -(n - 1)), _END_MONTH]
+        return [_shift_month(end_month, -(n - 1)), end_month]
     if mode == "between":
         start, end = t.get("start"), t.get("end")
         if not start and not end:
@@ -95,24 +102,27 @@ def _norm_filters(filters: list[dict]) -> list[dict]:
     return out
 
 
-def canonical_dsl(dsl: dict | QueryDSL, role: str = "boss") -> dict:
+def canonical_dsl(dsl: dict | QueryDSL, role: str = "boss", dataset: str = "ecommerce") -> dict:
     """规范化 DSL：只保留影响 SQL 语义的字段（对照 compile_sql 的输入面）。
 
     丢弃 intent（从不参与编译）；维度/过滤归一；时间解析为绝对窗口。
     role 显式参与——行级权限在编译期注入，同 DSL 不同角色结果不同。
+    dataset 显式参与——同 DSL 不同数据源的 SQL 完全不同，绝不跨源命中缓存。
     """
     if isinstance(dsl, QueryDSL):
         dsl = dsl.model_dump()
     d = dict(dsl)
     ob = d.get("order_by")
+    spec = get_spec(dataset)
     return {
         "v": _FINGERPRINT_VERSION,
-        "semver": _compile_semver(),   # 评审 A1：指标字典/编译器语义变更 → 全缓存失效
+        "ds": spec.name,               # 数据集标识：跨源隔离的第一道闸
+        "semver": _compile_semver(spec),   # 评审 A1：指标字典/编译器语义变更 → 全缓存失效
         "role": role,
         "metric": d.get("metric"),
         "dimensions": sorted(d.get("dimensions") or []),
         "filters": _norm_filters(d.get("filters") or []),
-        "time_window": _norm_time(d.get("time") or {}),
+        "time_window": _norm_time(d.get("time") or {}, spec.end_month),
         "order_by": (
             {"metric": ob.get("metric"), "direction": ob.get("direction", "desc")}
             if isinstance(ob, dict) else None
@@ -121,10 +131,10 @@ def canonical_dsl(dsl: dict | QueryDSL, role: str = "boss") -> dict:
     }
 
 
-def fingerprint(dsl: dict | QueryDSL, role: str = "boss") -> str:
-    """规范化 DSL 的 SHA256 指纹（缓存键）。"""
+def fingerprint(dsl: dict | QueryDSL, role: str = "boss", dataset: str = "ecommerce") -> str:
+    """规范化 DSL 的 SHA256 指纹（缓存键）。dataset 缺省为默认数据集。"""
     payload = json.dumps(
-        canonical_dsl(dsl, role), sort_keys=True, ensure_ascii=False, default=str
+        canonical_dsl(dsl, role, dataset), sort_keys=True, ensure_ascii=False, default=str
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -132,19 +142,19 @@ def fingerprint(dsl: dict | QueryDSL, role: str = "boss") -> str:
 # ---------------- 数据版本号（失效闸之二） ----------------
 
 
-def data_version(db_path: str | Path) -> str:
-    """数据集指纹：订单行数 + 最大日期 + 明细行数 + 明细去重订单数，读时计算。
+def data_version(db_path: str | Path, spec: DatasetSpec | None = None) -> str:
+    """数据集指纹：事实行数 + 最大日期 + 明细行数 + 明细去重单数，读时计算。
 
-    这是启发式指纹（内容碰撞理论上可能，ADR 有论证）——TTL 兜底其错误窗口。
+    探测 SQL 随数据集走（spec 声明，表名不同）。这是启发式指纹
+    （内容碰撞理论上可能，ADR 有论证）——TTL 兜底其错误窗口。
     """
+    if spec is None:
+        from .data.registry import DEFAULT_SPEC  # 延迟导入保持默认路径轻量
+
+        spec = DEFAULT_SPEC
     con = duckdb.connect(str(db_path), read_only=True)
     try:
-        row = con.execute(
-            "SELECT (SELECT COUNT(*) FROM orders),"
-            " (SELECT COALESCE(MAX(order_date), '-') FROM orders),"
-            " (SELECT COUNT(*) FROM order_items),"
-            " (SELECT COUNT(DISTINCT order_id) FROM order_items)"
-        ).fetchone()
+        row = con.execute(spec.version_probe_sql).fetchone()
     finally:
         con.close()
     return "|".join(str(x) for x in row)
@@ -173,11 +183,15 @@ class QueryCache:
         clock: Callable[[], float] = time.time,
         version_clock: Callable[[], float] = time.monotonic,
         version_ttl_seconds: float | None = None,
+        spec: DatasetSpec | None = None,
     ):
         s = get_settings()
+        self.spec = spec or get_spec(s.dataset)   # 版本探测/库路径随数据集（默认跟随配置）
         self.ttl_seconds = s.cache_ttl_seconds if ttl_seconds is None else ttl_seconds
         self.max_entries = s.cache_max_entries if max_entries is None else max_entries
-        self._version_provider = version_provider or (lambda: data_version(db_path or s.db_abs_path))
+        self._version_provider = version_provider or (
+            lambda: data_version(db_path or self.spec.db_abs_path, self.spec)
+        )
         self._enabled_override = enabled
         self._clock = clock
         self._version_clock = version_clock

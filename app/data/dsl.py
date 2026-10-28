@@ -11,12 +11,29 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from .metrics import METRICS
-from .schema import BASE_FROM, DIMENSIONS, DIMENSION_VALUES, FILTER_FIELDS
+from .registry import DEFAULT_SPEC, DatasetSpec
+from .schema import DIMENSIONS, DIMENSION_VALUES, FILTER_FIELDS
 
 Ops = Literal["=", "!=", "in", "not in", ">", "<", ">=", "<="]
+
+# 行级权限作用域维度（全局约定）：角色 -> 可见 region 取值（None = 不限）
+_SCOPE_DIM = "region"
+
+
+def _whitelists(info: ValidationInfo | None) -> tuple[dict, dict, dict]:
+    """校验白名单解析：context 携带 spec 用 spec；否则模块全局（默认数据集，行为不变）。
+
+    pydantic v2 的 context 会自动传播到嵌套模型（QueryDSL -> Filter），
+    因此 Filter 单独构造（无 context）时同样回退全局白名单。
+    """
+    ctx = getattr(info, "context", None)
+    spec = ctx.get("spec") if isinstance(ctx, dict) else None
+    if spec is None:
+        return METRICS, DIMENSIONS, FILTER_FIELDS
+    return spec.metrics, spec.dimensions, spec.filter_fields
 
 
 class Filter(BaseModel):
@@ -26,9 +43,10 @@ class Filter(BaseModel):
 
     @field_validator("field")
     @classmethod
-    def _check_field(cls, v: str) -> str:
-        if v not in FILTER_FIELDS:
-            raise ValueError(f"未知过滤字段: {v}，可用: {list(FILTER_FIELDS)}")
+    def _check_field(cls, v: str, info: ValidationInfo) -> str:
+        metrics, dimensions, filter_fields = _whitelists(info)
+        if v not in filter_fields:
+            raise ValueError(f"未知过滤字段: {v}，可用: {list(filter_fields)}")
         return v
 
 
@@ -38,12 +56,13 @@ class TimeRange(BaseModel):
     start: str | None = None  # YYYY-MM
     end: str | None = None
 
-    def to_sql(self) -> str:
-        f = "strftime('%Y-%m', o.order_date)"
+    def to_sql(self, time_field: str = "o.order_date", end_month: str | None = None) -> str:
+        f = f"strftime('%Y-%m', {time_field})"
+        em = end_month or _END_MONTH
         if self.mode == "last_n_months" and self.n:
             return (
                 f"{f} >= strftime('%Y-%m', date_trunc('month', "
-                f"DATE '{_END_MONTH}-01') - INTERVAL ({int(self.n) - 1}) MONTH)"
+                f"DATE '{em}-01') - INTERVAL ({int(self.n) - 1}) MONTH)"
             )
         if self.mode == "between":
             parts = []
@@ -77,17 +96,19 @@ class QueryDSL(BaseModel):
 
     @field_validator("metric")
     @classmethod
-    def _check_metric(cls, v: str) -> str:
-        if v not in METRICS:
-            raise ValueError(f"未知指标: {v}，可用: {list(METRICS)}")
+    def _check_metric(cls, v: str, info: ValidationInfo) -> str:
+        metrics, _dims, _ff = _whitelists(info)
+        if v not in metrics:
+            raise ValueError(f"未知指标: {v}，可用: {list(metrics)}")
         return v
 
     @field_validator("dimensions")
     @classmethod
-    def _check_dims(cls, v: list[str]) -> list[str]:
+    def _check_dims(cls, v: list[str], info: ValidationInfo) -> list[str]:
+        _metrics, dims, _ff = _whitelists(info)
         for d in v:
-            if d not in DIMENSIONS:
-                raise ValueError(f"未知维度: {d}，可用: {list(DIMENSIONS)}")
+            if d not in dims:
+                raise ValueError(f"未知维度: {d}，可用: {list(dims)}")
         return v
 
     @field_validator("limit")
@@ -99,7 +120,8 @@ class QueryDSL(BaseModel):
         return max(1, min(v, MAX_LIMIT))
 
 
-# 行级权限：角色 -> 可见区域（None = 不限）
+# 行级权限：角色 -> 可见区域（None = 不限）。作用域维度全局约定为 region（_SCOPE_DIM），
+# 角色表不随数据集重定义——组织级概念（详见 docs/registry_adr.md）
 ROLE_SCOPES: dict[str, list[str] | None] = {
     "boss": None,
     "south": ["华南"],
@@ -111,28 +133,49 @@ class CompileError(ValueError):
     pass
 
 
-def compile_sql(dsl: QueryDSL, role: str = "boss") -> tuple[str, str]:
+def build_dsl(payload: dict, spec: DatasetSpec | None = None) -> QueryDSL:
+    """按 spec 校验并构建 DSL。spec=None 时与 QueryDSL(**payload) 行为完全一致。"""
+    ctx = {"spec": spec} if spec is not None else None
+    return QueryDSL.model_validate(payload, context=ctx)
+
+
+def compile_sql(dsl: QueryDSL, role: str = "boss", spec: DatasetSpec | None = None) -> tuple[str, str]:
     """DSL -> (SQL, 口径说明)。编译期统一注入：权限、时间、LIMIT。
 
+    spec 指定目标数据集的语义层（None = 默认数据集，行为与硬编码时期一致）。
     纵深防御：值参数化不现实（DuckDB线程限制），因此维度值走
-    DIMENSION_VALUES 白名单 + 引号转义双保险；标识符全部来自硬编码映射。
+    dimension_values 白名单 + 引号转义双保险；标识符全部来自 spec 声明。
     """
-    metric = METRICS[dsl.metric]
+    spec = spec or DEFAULT_SPEC
+    metric = spec.metrics.get(dsl.metric)
+    if metric is None:
+        raise CompileError(f"未知指标: {dsl.metric}（数据集 {spec.name} 不含该指标）")
     scope = ROLE_SCOPES.get(role)
     if scope is None and role != "boss":
         raise CompileError(f"未知角色: {role}")
 
+    def _dim(d: str) -> str:
+        expr = spec.dimensions.get(d)
+        if expr is None:
+            raise CompileError(f"未知维度: {d}（数据集 {spec.name} 不支持）")
+        return expr
+
     # 维度列在前，指标值在后
-    selects = [f"{DIMENSIONS[d]} AS {d}" for d in dsl.dimensions] + [f"{metric.expr} AS value"]
-    group_by = [DIMENSIONS[d] for d in dsl.dimensions]
+    selects = [f"{_dim(d)} AS {d}" for d in dsl.dimensions] + [f"{metric.expr} AS value"]
+    group_by = [_dim(d) for d in dsl.dimensions]
 
     conds: list[str] = []
-    conds.append(dsl.time.to_sql())
+    conds.append(dsl.time.to_sql(spec.time_field, spec.end_month))
     if scope is not None:
+        scope_expr = spec.dimensions.get(_SCOPE_DIM)
+        if scope_expr is None:
+            raise CompileError(f"数据集 {spec.name} 未定义行级权限维度 {_SCOPE_DIM}")
         vals = ", ".join(_q(v) for v in scope)
-        conds.append(f"o.region IN ({vals})")
+        conds.append(f"{scope_expr} IN ({vals})")
     for f in dsl.filters:
-        col = FILTER_FIELDS[f.field]
+        col = spec.filter_fields.get(f.field)
+        if col is None:
+            raise CompileError(f"未知过滤字段: {f.field}（数据集 {spec.name} 不支持）")
         if f.op in ("in", "not in"):
             if not isinstance(f.value, list) or not f.value:
                 raise CompileError(f"filter {f.field} {f.op} 需要非空列表值")
@@ -143,7 +186,7 @@ def compile_sql(dsl: QueryDSL, role: str = "boss") -> tuple[str, str]:
         else:
             conds.append(f"{col} {f.op} {_q(f.value)}")
 
-    sql = f"SELECT {', '.join(selects)}\nFROM {BASE_FROM}\nWHERE {' AND '.join(conds)}"
+    sql = f"SELECT {', '.join(selects)}\nFROM {spec.base_from}\nWHERE {' AND '.join(conds)}"
     if group_by:
         sql += "\nGROUP BY " + ", ".join(str(g) for g in group_by)
     ob = dsl.order_by or OrderBy(metric=dsl.metric, direction="desc")
@@ -165,11 +208,12 @@ def _q(v: Any) -> str:
     return f"'{s}'"
 
 
-def validate_filter_values(dsl: QueryDSL) -> list[str]:
+def validate_filter_values(dsl: QueryDSL, spec: DatasetSpec | None = None) -> list[str]:
     """对枚举维度做取值校验，返回问题列表（clarifier/sql 修复循环用）。"""
+    spec = spec or DEFAULT_SPEC
     problems = []
     for f in dsl.filters:
-        allowed = DIMENSION_VALUES.get(f.field)
+        allowed = spec.dimension_values.get(f.field)
         if not allowed:
             continue
         vals = f.value if isinstance(f.value, list) else [f.value]

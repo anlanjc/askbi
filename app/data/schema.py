@@ -44,16 +44,23 @@ DIMENSION_VALUES: dict[str, list[str]] = {
 }
 
 
-def schema_prompt() -> str:
-    """给 LLM 看的 schema 摘要（不含物理表名，只暴露逻辑视图）。"""
-    dims = "\n".join(f"  - {k}" for k in DIMENSIONS)
-    vals = "\n".join(f"  - {k}: {'/'.join(v)}" for k, v in DIMENSION_VALUES.items() if v)
+def schema_prompt(spec=None) -> str:
+    """给 LLM 看的 schema 摘要（不含物理表名，只暴露逻辑视图）。
+
+    spec=None 时使用默认数据集（registry.DEFAULT_SPEC），输出与硬编码时期逐字节一致。
+    """
+    if spec is None:
+        from .registry import DEFAULT_SPEC  # 延迟导入避免循环
+
+        spec = DEFAULT_SPEC
+    dims = "\n".join(f"  - {k}" for k in spec.dimensions)
+    vals = "\n".join(f"  - {k}: {'/'.join(v)}" for k, v in spec.dimension_values.items() if v)
     return (
-        "数据集：某电商公司 24 个月的交易明细（orders / order_items / products / customers 逻辑视图）。\n"
+        f"数据集：{spec.title}。\n"
         "可用维度：\n" + dims + "\n"
         "维度取值（过滤值必须取自这里，取值之外一律拒绝）：\n" + vals + "\n"
-        "可用时间范围：2024-10 至 2026-09（按月）。数据截止月为 2026-09；"
-        "相对时间（上月/本月/最近N个月）一律以 2026-09 为基准（上月=本月=2026-09），"
+        f"可用时间范围：{spec.start_month} 至 {spec.end_month}（按月）。数据截止月为 {spec.end_month}；"
+        f"相对时间（上月/本月/最近N个月）一律以 {spec.end_month} 为基准（上月=本月={spec.end_month}），"
         "这是系统约定，无需向用户澄清。\n"
         "指标见指标字典（metrics）。不支持的字段/指标一律拒绝，不允许编造。"
     )

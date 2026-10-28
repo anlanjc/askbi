@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # 数据
     data_dir: str = "data"
     db_path: str = "data/askbi.duckdb"
+    dataset: str = "ecommerce"  # 数据源选择（app/data/registry.py 注册表：ecommerce | coffee）
     generator_seed: int = 42
     generator_months: int = 24
     generator_end_month: str = "2026-09"

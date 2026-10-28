@@ -83,8 +83,12 @@ METRICS: dict[str, MetricDef] = {
 }
 
 
-def metrics_prompt() -> str:
+def metrics_prompt(spec=None) -> str:
+    if spec is None:
+        from .registry import DEFAULT_SPEC  # 延迟导入避免循环
+
+        spec = DEFAULT_SPEC
     lines = []
-    for m in METRICS.values():
+    for m in spec.metrics.values():
         lines.append(f"  - {m.id}（{m.name}，别名：{'/'.join(m.aliases)}）：{m.caliber}")
     return "可用指标：\n" + "\n".join(lines)

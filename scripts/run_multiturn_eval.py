@@ -28,7 +28,7 @@ import os
 
 # ---- 环境硬前置：必须在任何 app 导入之前 ----
 os.environ["PROFILE"] = "full"
-os.environ["LLM_PROVIDER"] = "mock"
+os.environ.setdefault("LLM_PROVIDER", "mock")   # 默认 mock；显式传 LLM_PROVIDER=openai_compatible 跑真模型
 os.environ.setdefault("CLARIFY_SUSPEND_ENABLED", "0")
 
 import argparse

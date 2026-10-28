@@ -170,7 +170,9 @@ function fmtNum(v) {
   return String(v);
 }
 
-function renderAnswer(a) {
+const ANSWERS = [];   // 每张答案卡对应 {q, a}，「导出 CSV」按索引取用
+
+function renderAnswer(a, q) {
   if (a.kind === "clarify") {
     const opts = (a.options || []).map(o => `<button onclick="useOption(this)">${o}</button>`).join("");
     return `<div class="card"><h3>🤔 需要澄清</h3><div class="summary">${a.message}</div><div class="options">${opts}</div></div>`;
@@ -203,12 +205,14 @@ function renderAnswer(a) {
       <span class="badge ${b.truncated || b.degraded ? "warn" : "ok"}">数据完整度 ${b.truncated ? "截断" : "完整"}</span>
       <span class="badge">耗时 ${b.elapsed_ms ?? "-"} ms</span></div>`;
   }
+  ANSWERS.push({ q: q || "", a: a });
+  html += `<div style="margin-top:8px"><button onclick="downloadCsv(${ANSWERS.length - 1})">⬇ 导出 CSV</button></div>`;
   html += `</div>`;
   return html;
 }
 
 function embedChart(a) {
-  if (!a.chart) return;
+  if (!a.chart || !window.vegaEmbed) return;   // CDN 不可达时图表缺席但答案卡完整（离线兜底）
   const boxes = document.querySelectorAll(".chartbox");
   const box = boxes[boxes.length - 1];
   if (box) vegaEmbed(box, a.chart, {actions: false, theme: "dark"});
@@ -286,7 +290,7 @@ async function ask() {
       }
     }
     if (finalMsg) {
-      addMsg("", renderAnswer(finalMsg.answer));
+      addMsg("", renderAnswer(finalMsg.answer, q));
       embedChart(finalMsg.answer);
       const u = finalMsg.usage || {};
       const total = Object.values(u).reduce((s, x) => s + (x.prompt_tokens || 0) + (x.completion_tokens || 0), 0);
@@ -303,6 +307,48 @@ async function ask() {
 
 document.getElementById("ask").onclick = ask;
 document.getElementById("q").addEventListener("keydown", e => { if (e.key === "Enter") ask(); });
+
+// ---- 导出 CSV：元信息段+数据表，格式与 app/export.py 同构；BOM 让 Excel 正确识别中文 ----
+function csvCell(v) {
+  if (v == null) return "";
+  let s = typeof v === "number" ? String(Math.round(v * 100) / 100) : String(v);
+  if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+function answerToCsv(a, q) {
+  const L = [
+    ["问题", q || ""],
+    ["角色", document.getElementById("role").selectedOptions[0].text],
+    ["结论", a.summary || ""],
+    ["SQL", a.sql || ""],
+    ["口径", a.caliber || ""],
+    ["导出时间", new Date().toLocaleString("zh-CN", {hour12: false})],
+    [],
+  ];
+  const t = a.table || {};
+  if (t.columns) L.push(t.columns);
+  (t.rows || []).forEach(r => L.push(r));
+  return L.map(row => row.map(csvCell).join(",")).join("\r\n");
+}
+window.downloadCsv = function (idx) {
+  const item = ANSWERS[idx];
+  if (!item) return;
+  const csv = "\ufeff" + answerToCsv(item.a, item.q);
+  const name = "askbi_" + (item.q || "answer").slice(0, 24).replace(/[\\/:*?"<>|]/g, "_") + "_" +
+    new Date().toISOString().slice(0, 19).replace(/[-T:]/g, "") + ".csv";
+  const url = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
+  const link = document.createElement("a");
+  link.href = url; link.download = name; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+// ---- 深链：?q=<问题>&role=<boss|south|north> 加载即自动提问（演示 / 分享 / 截图友好）----
+const URLP = new URLSearchParams(location.search);
+if (URLP.get("role")) document.getElementById("role").value = URLP.get("role");
+if (URLP.get("q")) {
+  document.getElementById("q").value = URLP.get("q");
+  window.addEventListener("load", () => setTimeout(ask, 400));
+}
 </script>
 </body>
 </html>

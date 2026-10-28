@@ -1,0 +1,20 @@
+﻿问题,上月各区域销售额
+角色,boss
+结论,已按 region 输出销售额明细，共 7 行
+SQL,"SELECT o.region AS region, SUM(oi.quantity * oi.unit_price * (1 - oi.discount)) AS value
+FROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN customers c ON o.customer_id = c.customer_id
+WHERE strftime('%Y-%m', o.order_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)
+GROUP BY o.region
+ORDER BY value DESC
+LIMIT 100"
+口径,指标口径｜销售额：折后销售额 = Σ(数量×单价×(1-折扣))，含所有订单状态
+导出时间,2026-10-29 07:53:25
+
+region,value
+华南,1171401.49
+华东,1028076.9
+华北,735830.05
+华中,456856.49
+西南,341559.0
+西北,145609.41
+东北,109342.99

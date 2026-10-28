@@ -3,7 +3,9 @@
 > 对标腾讯云 ChatBI / 阿里瓴羊智能小Q 的多 Agent 对话式经营分析系统
 > **NL2DSL2SQL 受控查询 · 数值确定性 · 合规质检闭环 · 可判对错的评测**
 
-[![tests](https://img.shields.io/badge/tests-44%2F44-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval-100%25-brightgreen)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
+[![tests](https://img.shields.io/badge/tests-94%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
+
+> **面试者/评审请从 [EVIDENCE.md](EVIDENCE.md) 开始**——做了什么/没做什么、三个真实 bug、分层评测表、逐条复现命令。
 
 ## 这是什么
 
@@ -35,7 +37,7 @@ flowchart LR
 | 3 | **口径治理** | 指标字典给"毛利率"唯一权威表达式+版本化口径说明，答案自带口径 |
 | 4 | **安全沙箱** | 只读连接 + 语句守卫 + 行级权限（角色切换演示）+ LIMIT 强制 |
 | 5 | **歧义澄清 + 拒答** | 模糊问题反问而不是瞎猜；数据没有/要预测未来 → 明确拒答 |
-| 6 | **Eval 即 CI** | 33 条可判对错的评测集（执行准确率/拒答正确率/澄清正确率）+ 消融开关 |
+| 6 | **Eval 即 CI** | smoke 33 条回归集 + full 116 条分层集（含 15 条 holdout）+ 多轮 30 条，mock/real 双口径 + 消融开关 + 故障注入 |
 
 ## 快速开始
 
@@ -69,15 +71,23 @@ docker compose up --build          # http://localhost:8000
 LLM_PROVIDER=deepseek DEEPSEEK_API_KEY=sk-... docker compose up
 ```
 
-## 评测
+## 评测（分层口径：回归集 ≠ benchmark）
 
 ```bash
-python scripts/run_eval.py                    # 全量 33 条
-python scripts/run_eval.py --ablation sloppy  # 模拟"LLM 编数字"，验证 QA 闭环拦截
-python scripts/run_eval.py --ablation no_qa   # 关闭修订循环
+python scripts/run_eval.py                                          # v1 smoke 回归集 33 条
+python scripts/run_eval.py --dataset eval/dataset_v2.json           # v2 full 分层集 116 条
+python scripts/run_eval.py --dataset eval/dataset_v2.json --split holdout   # 仅 holdout 15 条
+python scripts/run_eval.py --ablation sloppy                        # 模拟"LLM 编数字"，验证 QA 闭环拦截
+python scripts/run_eval.py --ablation no_qa                         # 关闭修订循环
+python scripts/build_dataset_v2.py --check                          # 金标自检（可重建评测集）
+python scripts/run_multiturn_eval.py                                # 多轮 30 条 64 轮
+python scripts/fault_inject.py --n 10                               # 故障注入 6 场景
+python scripts/load_test.py                                         # 压测矩阵 12 点位
 ```
 
-**真实模型结果**（deepseek-v4-flash-0731 @ DashScope 兼容接口，2026-10-26）：
+v2 分层集：80 query / 12 归因 / 12 澄清 / 12 拒答，**金标一律由 `compile_sql` 生成**（`scripts/build_dataset_v2.py` 构建期自检：mock 解析器重答每道 query 题与金标同库比对），含行级权限 role 用例与"净销售额"口径题。v1 33 条保留为 smoke 回归集——**"33 条是回归集，不是 benchmark"是有意的工程判断**。
+
+**真实模型结果**（deepseek-v4-flash-0731 @ DashScope 兼容接口）：v1 33 条 2026-10-26（下表）；v2 116 条 2026-10-29（`eval/report_openai_compatible_dataset_v2.md`）。
 
 | 指标 | 结果 |
 |---|---|
@@ -98,7 +108,13 @@ python scripts/run_eval.py --ablation no_qa   # 关闭修订循环
 
 > 评测迭代过程（87.9% → 97.0% → 100%，每轮由评测集定位问题、修 prompt/判定、回归）见 [docs/RESUME.md](docs/RESUME.md)。
 
-**Eval 即 CI**：仓库自带 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)——推送到 GitHub 后，每次 push 自动执行「装依赖 → 生成数据 → 76 项测试 → 33 条评测」全流程（mock 模式，无需任何 secret），评测报告作为 artifact 留档。
+**Eval 即 CI**：仓库自带 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)——推送到 GitHub 后，每次 push 自动执行「装依赖 → 生成数据 → 全量测试 → smoke + full 双评测集」流程（mock 模式，无需任何 secret），评测报告作为 artifact 留档。
+
+## 可靠性证据（demo 只测 happy path，工程系统测失败路径）
+
+- **故障注入**（`evidence/fault_injection.md`）：LLM 瞬时故障/完全不可用/返回非法 JSON/SQL 超时/库文件缺失/编造指标，6 场景 ×10 次——**零崩溃**，全部诚实降级（拒答/留空叙述/回退确定性核验），客户端指数退避 + 节点降级语义 + SQL 修复循环 + 白名单守卫四层吸收。
+- **压测**（`evidence/load_test.md`）：进程内 12 点位矩阵（并发 10/25/50 × 缓存开关 × 模拟 LLM 延迟 0/300ms）。结论：编排上限 110-124 QPS；P95 ≈ 单请求 LLM 串行调用次数 × 单次延迟（light 2 次/full 4 次），**瓶颈在 LLM 不在检索/SQL**；压测还揪出并修复了缓存负收益真 bug（版本探测每 get 全表扫描 → 30s 记忆化，修复后 +12%）。
+- **功能档位**：`PROFILE=conservative`（默认，实验功能全关零行为变化）/ `PROFILE=full`（一键演示）。`python scripts/demo_full.py` 四场景演示（缓存命中/澄清挂起恢复/三角色权限）。
 
 ## MCP：数据服务不止服务自己
 

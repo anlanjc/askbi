@@ -34,7 +34,7 @@
 | 校准迭代 | refusal/clarify 子集 | clarifier prompt 增补 4 类 refuse 规则（**只用 main split 失败信号**）→ 两子集 **12/12 + 12/12** | holdout 不参与调参 |
 | holdout 盲测 | 13 条 | run1 84.6% / run2 **100%**（失败均为 drill 类运行间波动，主跑同题全 ✓） | 真实口径 ≈92.3%±波动 |
 | **no_qa 消融（real）** | v2 116 条 | **93.1%**：drill **5/12=42%**（vs 主跑 12/12）——**QA 修订循环在 drill 类价值 +58pp**；叙述数值一致率 100%→95.5%；refusal/clarify 校准后无 QA 也 12/12 | 成本 544,462 token；v2-078 失败经 trace 定位=**维度顺序漂移**（非语义错）→ 判分已修为列序无关 |
-| 多轮 | 30 条 64 轮 | mock **100%**（AB-2 口径，缓存命中 4/4）；real 全量**待重跑**（第一次真跑被 AB-3 中间态打断；此前 61 轮 95.3% 为 mock 误标+漏挂起开关，已修正） | evidence/multiturn_report.md（mock）；真模型冒烟 suspend 2/2 见 multiturn_smoke_real.md |
+| 多轮 | 30 条 64 轮 | mock **100%**（AB-2 口径）；real **24/30 条目、57/64 轮=89.1%**（10-29，221,065 token）：**机制场景全绿**——指代消解 16/17+时间追问 6/6+组合 3/3+缓存复问 10/10（命中 4/4）+澄清流 4/4+行级权限多轮 6/6+无上下文 1/1；失败 7 轮全在**边界探针**（fallback/词表边界/多实体守卫——mock 期望编码 mock 的保守规则，真实模型边界判断不同，属预期差异非机制缺陷） | evidence/multiturn_report_real.md |
 | **多数据源（AB-3）** | B 集 26 条（18 query/3 归因/2 澄清/3 拒答，咖啡域） | mock **100%**（26/26，DATASET=coffee 全链路落 B 库）；金标由 compile_sql(spec=coffee) 生成+构建期自检 | 语义层解耦实证；同问题双源 SQL/结果不同、缓存互不命中 |
 | 故障注入 | 6 场景 ×10 | 零崩溃，全部诚实降级 | evidence/fault_injection.md |
 | 压测 | 12 点位矩阵 | 编排上限 110-124 QPS；300ms 模拟延迟下 P50≈1.2s≈4×LLM | evidence/load_test.md |

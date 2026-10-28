@@ -26,8 +26,14 @@ jobs:
       - name: Unit & e2e tests (mock LLM, no API key needed)
         run: python -m pytest -q
 
-      - name: Evaluation benchmark (31 items, mock provider)
+      - name: Dataset v2 gold self-check (compiler-generated, 116 items)
+        run: python scripts/build_dataset_v2.py --check
+
+      - name: Evaluation smoke (v1, 33 items, mock provider)
         run: python scripts/run_eval.py
+
+      - name: Evaluation full (v2, 116 items, mock provider)
+        run: python scripts/run_eval.py --dataset eval/dataset_v2.json
 
       - name: Upload eval report
         if: always()

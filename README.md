@@ -3,7 +3,7 @@
 > 对标腾讯云 ChatBI / 阿里瓴羊智能小Q 的多 Agent 对话式经营分析系统
 > **NL2DSL2SQL 受控查询 · 数值确定性 · 合规质检闭环 · 可判对错的评测**
 
-[![tests](https://img.shields.io/badge/tests-117%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
+[![tests](https://img.shields.io/badge/tests-119%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
 
 > **面试者/评审请从 [EVIDENCE.md](EVIDENCE.md) 开始**——做了什么/没做什么、三个真实 bug、分层评测表、逐条复现命令。
 

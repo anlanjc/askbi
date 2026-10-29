@@ -17,7 +17,7 @@
 |---|---|
 | ![SQL 溯源](docs/screenshots/06_sql_trace.png) | ![行级权限](docs/screenshots/04_role_south.png) |
 
-答案卡自带「⬇ 导出 CSV」（UTF-8 BOM，Excel 双击直开，元信息+SQL 口径+数据表同文件，`app/export.py` 标准库实现）；URL 深链 `?q=<问题>&role=<boss|south|north>` 可直达任意演示帧。完整截图（含首页与北方区 2 行对比）在 [docs/screenshots/](docs/screenshots/)。
+答案卡自带「⬇ 导出 CSV」：优先 `/api/export?task_id=` 服务端导出（RFC 5987 中文文件名），失败自动降级前端生成——同一格式：UTF-8 BOM + 元信息段 + SQL 口径 + 数据表，Excel 双击直开；`app/export.py` 标准库 csv 零依赖实现，9 项单测（注入转义 roundtrip + API 集成）。URL 深链 `?q=<问题>&role=<boss|south|north>` 可直达任意演示帧。完整截图（含首页与北方区 2 行对比）在 [docs/screenshots/](docs/screenshots/)。
 
 ## 这是什么
 

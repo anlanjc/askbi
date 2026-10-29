@@ -6,16 +6,18 @@ import json
 from langgraph.types import Command
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..agents.graph import get_graph
 from ..config import get_settings
 from ..data.registry import get_spec
 from ..data.schema import schema_prompt
+from ..export import answer_to_csv, export_filename
 from .schemas import AskRequest
 from .task_store import get_task_store
 
@@ -139,6 +141,24 @@ async def ask(body: AskRequest):
 @app.get("/api/tasks")
 async def list_tasks():
     return get_task_store().list()
+
+
+@app.get("/api/export")
+async def export_csv(task_id: str):
+    """把一次问答的答案表导出 CSV（BOM+元信息+SQL 口径+数据表，Excel 直开）。"""
+    t = get_task_store().get(task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="task not found")
+    if not t.get("answer"):
+        raise HTTPException(status_code=409, detail="task has no answer yet")
+    csv_text = answer_to_csv(t["answer"], question=t.get("question") or "", role=t.get("role") or "")
+    # 中文文件名走 RFC 5987 filename*（percent-encode 后才可入 latin-1 header），ASCII fallback 兜底
+    fname = quote(export_filename(t.get("question") or ""))
+    return Response(
+        content=csv_text.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=\"askbi_export.csv\"; filename*=UTF-8''{fname}"},
+    )
 
 
 @app.get("/api/tasks/{task_id}")

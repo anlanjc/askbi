@@ -1,10 +1,13 @@
-"""导出 CSV 纯函数测试：转义/编码/同构/健壮性（零 app 内部依赖，AB-3 中间态安全）。"""
+"""导出 CSV 纯函数测试：转义/编码/同构/健壮性（零 app 内部依赖，AB-3 中间态安全）+ API 集成。"""
 
 from __future__ import annotations
 
 import csv
 import io
+import json
 from datetime import datetime
+
+import pytest
 
 from app.export import BOM, answer_to_csv, csv_cell, export_filename
 
@@ -104,3 +107,45 @@ def test_csv_cell_normalization_and_escape_parity():
     assert body[8] == '"a,b"'          # 前端：'"' + s.replace('"','""') + '"'
     assert body[9] == '"q""q"'
     assert body[10] == '"n\nl"'
+
+
+# ---- API 集成：/api/ask（SSE）→ /api/export 全链路 ----
+
+
+@pytest.fixture
+async def client(db_path):
+    import httpx
+
+    from app.api.main import app
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+async def _final_task_id(client) -> str:
+    resp = await client.post("/api/ask", json={"question": "上个月的销售额是多少", "role": "boss"})
+    assert resp.status_code == 200
+    for frame in resp.text.split("\n\n"):
+        if frame.startswith("data: ") and '"final"' in frame:
+            return json.loads(frame[6:])["task_id"]
+    raise AssertionError("no final frame in SSE stream")
+
+
+async def test_export_api_roundtrip(client):
+    task_id = await _final_task_id(client)
+    r = await client.get("/api/export", params={"task_id": task_id})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    assert "attachment" in r.headers["content-disposition"]
+    body = r.content.decode("utf-8")
+    assert body.startswith(BOM)
+    parsed = list(csv.reader(io.StringIO(body.lstrip(BOM), newline="")))
+    assert parsed[0] == ["问题", "上个月的销售额是多少"]
+    assert parsed[1] == ["角色", "boss"]
+
+
+async def test_export_api_error_paths(client):
+    assert (await client.get("/api/export", params={"task_id": "no-such"})).status_code == 404
+    from app.api.task_store import get_task_store
+    t = get_task_store().create("q", "boss")   # running 态无答案
+    assert (await client.get("/api/export", params={"task_id": t["id"]})).status_code == 409

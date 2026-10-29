@@ -291,6 +291,7 @@ async function ask() {
     }
     if (finalMsg) {
       addMsg("", renderAnswer(finalMsg.answer, q));
+      if (finalMsg.task_id && ANSWERS.length) ANSWERS[ANSWERS.length - 1].task = finalMsg.task_id;
       embedChart(finalMsg.answer);
       const u = finalMsg.usage || {};
       const total = Object.values(u).reduce((s, x) => s + (x.prompt_tokens || 0) + (x.completion_tokens || 0), 0);
@@ -330,16 +331,32 @@ function answerToCsv(a, q) {
   (t.rows || []).forEach(r => L.push(r));
   return L.map(row => row.map(csvCell).join(",")).join("\r\n");
 }
-window.downloadCsv = function (idx) {
-  const item = ANSWERS[idx];
-  if (!item) return;
-  const csv = "\ufeff" + answerToCsv(item.a, item.q);
-  const name = "askbi_" + (item.q || "answer").slice(0, 24).replace(/[\\/:*?"<>|]/g, "_") + "_" +
-    new Date().toISOString().slice(0, 19).replace(/[-T:]/g, "") + ".csv";
-  const url = URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"}));
+function triggerDownload(url, name) {
   const link = document.createElement("a");
   link.href = url; link.download = name; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function localExportName(q) {
+  return "askbi_" + (q || "answer").slice(0, 24).replace(/[\\/:*?"<>|]/g, "_") + "_" +
+    new Date().toISOString().slice(0, 19).replace(/[-T:]/g, "") + ".csv";
+}
+window.downloadCsv = async function (idx) {
+  const item = ANSWERS[idx];
+  if (!item) return;
+  // 优先服务端导出（/api/export 与 app/export.py 同一格式，含 SQL 溯源）；失败降级前端生成
+  if (item.task) {
+    try {
+      const resp = await fetch("/api/export?task_id=" + encodeURIComponent(item.task));
+      if (resp.ok) {
+        const cd = resp.headers.get("Content-Disposition") || "";
+        const m = cd.match(/filename\*=UTF-8''([^;\s]+)/);
+        triggerDownload(URL.createObjectURL(await resp.blob()), m ? decodeURIComponent(m[1]) : "askbi_export.csv");
+        return;
+      }
+    } catch (e) { /* 服务端不可达 → 本地生成 */ }
+  }
+  const csv = "\ufeff" + answerToCsv(item.a, item.q);
+  triggerDownload(URL.createObjectURL(new Blob([csv], {type: "text/csv;charset=utf-8"})), localExportName(item.q));
 };
 
 // ---- 深链：?q=<问题>&role=<boss|south|north> 加载即自动提问（演示 / 分享 / 截图友好）----

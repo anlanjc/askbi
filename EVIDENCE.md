@@ -5,7 +5,7 @@
 
 ## 1. 我做了什么 / 没做什么
 
-**做了**：多 Agent ChatBI 全链路（LangGraph 7 节点状态机、NL→DSL→SQL 白名单编译器、DuckDB 只读沙箱、QA 数值质检闭环、行级权限、MCP stdio server、FastAPI SSE）；2026-10-28/29 补齐工程证据链：可靠性层（LLMError+指数退避+四节点降级）、故障注入 6 场景压测归因、压测矩阵与缓存性能 bug 修复、116 条分层评测集（构建期自检）、多轮对话评测（30 条 64 轮）、PROFILE 功能档位、净销售额口径治理、本证据链。
+**做了**：多 Agent ChatBI 全链路（LangGraph 7 节点状态机、NL→DSL→SQL 白名单编译器、DuckDB 只读沙箱、QA 数值质检闭环、行级权限、MCP stdio server、FastAPI SSE）；2026-10-28/29 补齐工程证据链：可靠性层（LLMError+指数退避+四节点降级）、故障注入 6 场景压测归因、压测矩阵与缓存性能 bug 修复、116 条分层评测集（构建期自检）、多轮对话评测（30 条 64 轮）、PROFILE 功能档位、净销售额口径治理、本证据链；2026-11-05 补齐：**HTTP 全栈压测双口径**（uvicorn 真进程 SSE 全链 vs 进程内，evidence/load_test_http.md）与**管理面审计日志**（谁在何时通过什么改了什么，变更与审计同窗口落盘、审计失败变更回滚，app/audit.py + /api/admin/* 四端点）。
 
 **演示资产（10-29，界面可看可点）**：六帧真实浏览器截图（[docs/screenshots/](docs/screenshots/)，README 顶部嵌入）——首答 Vega 图表+数据表 / 复问 ⚡ 缓存命中徽章 / SQL 全文+口径逐字溯源 / 行级权限三角色 7·1·2 行对比（同题 boss/south/north）；答案卡一键「⬇ 导出 CSV」全链路落地（`app/export.py` 标准库 csv 零依赖：BOM 元信息段+SQL+数据表，Excel 直开；`/api/export?task_id=` 端点 RFC 5987 中文文件名，前端优先服务端/失败降级前端同构格式；9 项单测含注入转义 roundtrip 与 API 集成 404/409，真服务端到端实测 200）；零 key 一键演示复验全通：`scripts/demo.py`（5 问）+ `scripts/demo_full.py`（四场景）输出归档 [evidence/demo_smoke_ab4.txt](evidence/demo_smoke_ab4.txt) / [demo_full_ab4.txt](evidence/demo_full_ab4.txt)，真实答案导出样例 [export_csv_sample_ab4.csv](evidence/export_csv_sample_ab4.csv)；web 深链 `?q=&role=` 支持直达演示帧（截图与分享同一条路）。截图方法注记：SSE 流式页面 Edge `--headless --screenshot` 的 virtual-time-budget/--timeout 均截不到最终异步态，改用浏览器自动化等待答案卡 DOM 出现后截帧，并以服务重启清缓存区分首答与缓存命中帧——两次渲染均为 mock 服务真实响应，无摆拍。
 
@@ -37,9 +37,10 @@
 | 多轮 | 30 条 64 轮 | mock **100%**（AB-2 口径）；real **24/30 条目、57/64 轮=89.1%**（10-29，221,065 token）：**机制场景全绿**——指代消解 16/17+时间追问 6/6+组合 3/3+缓存复问 10/10（命中 4/4）+澄清流 4/4+行级权限多轮 6/6+无上下文 1/1；失败 7 轮全在**边界探针**（fallback/词表边界/多实体守卫——mock 期望编码 mock 的保守规则，真实模型边界判断不同，属预期差异非机制缺陷） | evidence/multiturn_report_real.md |
 | **多数据源（AB-3）** | B 集 26 条（18 query/3 归因/2 澄清/3 拒答，咖啡域） | mock **100%**（26/26，DATASET=coffee 全链路落 B 库）；金标由 compile_sql(spec=coffee) 生成+构建期自检 | 语义层解耦实证；同问题双源 SQL/结果不同、缓存互不命中 |
 | 故障注入 | 6 场景 ×10 | 零崩溃，全部诚实降级 | evidence/fault_injection.md |
-| 压测 | 12 点位矩阵 | 编排上限 110-124 QPS；300ms 模拟延迟下 P50≈1.2s≈4×LLM | evidence/load_test.md |
+| 压测（进程内） | 12 点位矩阵 | 编排上限 110-124 QPS；300ms 模拟延迟下 P50≈1.2s≈4×LLM（10-28 存档，11-05 同日复测 ±4% 内复现） | evidence/load_test.md |
+| **压测（HTTP 全栈双口径）** | 22 点位（进程内 vs uvicorn 真进程 SSE 全链，11-05） | c=1 差值法附加开销 **5.1ms**（框架地板 3.9ms + SSE 净附加 ≈1.2ms）；delay=300ms 下 HTTP≈进程内 **0.92~0.97×**（瓶颈=LLM 串行调用，框架被摊薄）；delay=0 高并发 0.53× 系**共址 CPU 争抢伪影**（诚实标注）；缓存收益随瓶颈位置变化（c=1 +36% / 高并发 +3~4%） | evidence/load_test_http.md |
 
-pytest：**110 项全绿**（10-29 实测；95 项存量零改动 + 15 项注册表新增）。金标生成：`scripts/build_dataset_v2.py` / `scripts/build_dataset_b.py`（可重建/自检）。
+pytest：**129 项全绿**（11-05 实测；最新增量 = 管理面审计 8 项，tests/test_audit.py；此前基线 121 绿）。金标生成：`scripts/build_dataset_v2.py` / `scripts/build_dataset_b.py`（可重建/自检）。
 
 ## 5. 复现命令
 
@@ -56,8 +57,16 @@ LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_v2.json --sp
 python scripts/build_dataset_v2.py --check   # 金标自检（可重建评测集）
 python scripts/run_multiturn_eval.py         # 多轮 30 条（PROFILE=full 内部处理）
 python scripts/fault_inject.py --n 10        # 故障注入 → evidence/fault_injection.md
-python scripts/load_test.py                  # 压测矩阵 → evidence/load_test.md
+python scripts/load_test.py                  # 压测矩阵（进程内）→ evidence/load_test.md
+python scripts/load_test_http.py             # HTTP 全栈双口径（uvicorn 真进程）→ evidence/load_test_http.md
 python scripts/demo_full.py                  # PROFILE=full 四场景演示
+
+# 管理面（审计日志：谁在何时通过什么改了什么，app/audit.py）
+curl -X POST http://127.0.0.1:8000/api/admin/tasks/clear   # 任务清除（JSONL 归档改名可回放）
+curl -X POST http://127.0.0.1:8000/api/admin/cache/clear   # 缓存清空
+curl -X POST http://127.0.0.1:8000/api/admin/config -H "Content-Type: application/json" -d "{\"cache_enabled\": true}"   # 运行期开关 from→to
+curl http://127.0.0.1:8000/api/admin/audit                 # 审计只读查询（最新在前）
+# ADMIN_TOKEN 配置后所有 /api/admin/* 须带 X-Admin-Token 头（常量时间比较）
 
 # 第二数据源（AB-3：线下连锁咖啡，DATASET 环境变量切换，默认 ecommerce）
 python scripts/gen_data_b.py                 # 生成 B 库（~5 万行，种子 42，双业务故事可归因）
@@ -74,4 +83,6 @@ LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset
 - 多轮 followup 的渠道词表已收敛到 DIMENSION_VALUES 单一来源；"换成 X 渠道"重复后缀 bug 已修复（AB-2 评审发现）。
 - clarify_suspend 需 API 层 thread_id/resume（图内 run_ask 不挂起）——多轮评测脚本按此适配（ADR 见 docs/multiturn_adr.md）。
 - 第二数据源适配器已落地（registry_adr.md）：B 数据集共享全局 ROLE_SCOPES（同一大区划分）；RAG 样例库未按数据集隔离（真实 provider 下 B 问题会检索到电商 few-shot，mock 不受影响）；多轮指代消解词表仍取默认数据集（followup 默认关闭，边界如实声明）。
+- 管理面审计日志（11-05）："同事务"语义由 JSONL 翻译实现——变更与审计同锁窗口落盘、审计写失败变更回滚（app/audit.py 模块头有完整推导）；任务清除的归档改名假定单 worker 部署口径，多 worker 管理面属 PRODUCTION_GAP；ADMIN_TOKEN 留空=开放但全审计（与 api_key 同哲学）。
+- HTTP 全栈压测（11-05）：客户端与 uvicorn 同机共址，delay=0 高并发点位 QPS 受 CPU 争抢压制（0.53×），**不当服务端容量上限使用**；delay=300ms（真实形态近似）下 0.92~0.97× 才是部署参考口径。
 - 下一步：200+ 条评测集、RAG 样例库按数据集隔离、真实部署与灰度。

@@ -1,3 +1,103 @@
+# PROJECT BOOK · AskBI 问数引擎
+
+> 六节标准版（对齐底座三件套格式，2026-11-05 补齐）+ 原书正文存档。配套：[README](../README.md)｜[EVIDENCE.md](../EVIDENCE.md)（证据链首页）｜[STUDY_GUIDE.md](STUDY_GUIDE.md)｜[INTERVIEW.md](INTERVIEW.md)（16 道深挖题）｜[DESIGN.md](DESIGN.md)。
+> 阅读指引：§0-§6 是六节速览与面试导航；"原书正文存档"区从《1. 项目定位》起到《9. 扩展篇》止**原样保留**（其内部"§4.2/§5.6"等引用仍指存档区原节号，STUDY_GUIDE 的"PROJECT_BOOK 第 4 节"引用不受影响）。数字权威口径 = §0 数字台账 + EVIDENCE.md。
+
+---
+
+## 0. 一页定位
+
+**是什么**：多 Agent 对话式经营分析系统（ChatBI）——业务人员用自然语言提问，一组协作 Agent 产出**带口径、数字可溯源、过完质检**的分析答案，全程 SSE 流式可视。一句话架构：LangGraph 七节点状态机（路由→澄清→NL2DSL→沙箱执行→归因→质检→组装）+ FastAPI/SSE + DuckDB 只读沙箱 + RAG 样例检索 + MCP 数据服务 + 三层评测体系。
+
+**回答哪道面试必答题**：ChatBI/NL2SQL 岗 JD 的核心三问都能指到代码——"幻觉数字怎么防"（确定性/不确定性分层 + QA 逐数核验闭环）、"SQL 注入怎么防"（NL2DSL2SQL 三段式，LLM 只产白名单 DSL）、"数据权限怎么做"（行级权限编译期注入而非 SQL 改写）。多 Agent 编排、缓存、多轮、human-in-the-loop 各有独立 ADR 与消融数字。
+
+**组合叙事**：检索增强（policy-compass）→ **工具编排与数值可信（askbi，本仓库）** → 底层引擎（miniagent）→ 评测量化（agenteval）→ 认知记忆（memomind）→ 网关与多租户（agentgate）。askbi 承担的位置是"多 Agent 协作 + 结果可信"：policy-compass 证明检索正确，askbi 证明**数字正确**。
+
+**简历一句话版**：多 Agent 对话式 BI（LangGraph 七节点 + NL2DSL2SQL 受控编译 + DuckDB 只读沙箱，129 项测试）：v2 分层集 116 条 real 94.8%（数值一致率 100%）、13 条 holdout 盲测不参与调参、关质检消融归因类 12/12→5/12（QA 闭环 +58pp）、多轮 30 条 64 轮 mock 100%、故障注入 6 场景×10 零崩溃、双数据源上层零改动（DatasetSpec 注册表）、管理面审计日志（变更与审计同窗口落盘）。
+
+**数字台账（全部实跑口径，mock 与 real 严格分列）**：
+
+| 层 | 数字 | 出处 |
+|---|---|---|
+| 测试 | pytest **129 项全绿** | `python -m pytest -q` |
+| 单轮 real | v1 33 条 **100%**；v2 116 条 **94.8%**（110/116，数值一致率 100%；query 79/80 · drill 12/12 · clarify 12/12 · refusal 7/12，成本 560,550 token） | eval/report_openai_compatible_dataset_v2.md |
+| 单轮 mock | v1 33 条 **100%** / v2 116 条 **100%**（金标由 compile_sql 生成+构建期自检） | eval/report_mock_dataset_v2.md |
+| **holdout 纪律** | 13 条 holdout **盲测两轮 84.6%/100%**，**不参与调参**——clarifier 校准只用 main split 失败信号 | eval/report_openai_compatible_dataset_v2_holdout*.md |
+| 消融 | 关 QA 修订循环 real **93.1%**：drill **12/12→5/12**（**QA 闭环 +58pp**）、数值一致率 100%→95.5% | eval/report_openai_compatible_dataset_v2_no_qa.md |
+| 多轮 | 30 条 64 轮：mock **100%**；real **24/30 条目、57/64 轮=89.1%**（机制场景全绿：指代消解 16/17、缓存复问 10/10、行级权限 6/6；失败全在边界探针=预期差异） | evidence/multiturn_report_real.md |
+| 可靠性 | 故障注入 6 场景×10 次**零崩溃**；压测双口径：进程内 110-124 QPS（10-28 存档）+ HTTP 全栈（11-05，[evidence/load_test_http.md](../evidence/load_test_http.md)） | evidence/ |
+| 多数据源 | coffee B 集 26 条 mock **100%**（DATASET=coffee 一键切换，上层零改动） | eval/report_mock_dataset_b.md |
+| ADR 清单 | [adr.md](adr.md) ADR-1~5（DSL 层/DuckDB/QA 确定性/预算路由/MCP）+ [cache_adr.md](cache_adr.md) + [followup_adr.md](followup_adr.md) + [clarify_suspend_adr.md](clarify_suspend_adr.md) + [multiturn_adr.md](multiturn_adr.md) + [registry_adr.md](registry_adr.md)；导出（app/export.py）与 thumbs 反馈闭环无独立 ADR，实现决策记录在 [EVIDENCE.md §1](../EVIDENCE.md) | docs/ |
+
+## 1. 技术栈全景（每一层"选了什么、为什么、放弃了什么"）
+
+完整选型对比表在原书存档 §3（含被否方案），此处只列结论链：LangGraph 1.x StateGraph（显式状态机表达回路+流式，放弃 AutoGen/自研循环）｜FastAPI + SSE + pydantic v2（全异步类型即契约，放弃 WebSocket/DRF）｜DuckDB 单文件只读（列存聚合快零部署，生产换数仓时 DSL 编译器换 target）｜NL2DSL2SQL 三段式（白名单 DSL 编译期注入治理，放弃直接 NL2SQL）｜TF-IDF 字符二元组 RAG（中文短问句够用、零下载、确定性，chroma 可选）｜OpenAI 兼容 provider 工厂（DeepSeek/GLM/Qwen 一环境变量切换）｜MockLLM 规则解析器（CI 无 key 可跑、测得了正确性）｜MCP 2.x stdio（指标能力开放给任意 MCP 客户端）。额度限制下的显式取舍：无 embedding 配额 → 检索用词面方法（诚实声明于原书 §3）。
+
+## 2. JD 要求映射表（JD 原文 → 代码位置 → 面试指路一句话）
+
+| JD 关键词 | 对应实现 | 面试指路一句话 |
+|---|---|---|
+| "NL2SQL / ChatBI / Text2SQL" | app/data/dsl.py（QueryDSL 白名单校验 + compile_sql 编译器）+ app/data/metrics.py（指标字典） | "LLM 只产受白名单约束的 DSL，物理 SQL 由编译器渲染——注入面在编译期归零" |
+| "多 Agent 编排 / LangGraph" | app/agents/graph.py（七节点 + 条件边 + SQL 修复/QA 修订双回路 + 轻量捷径） | "两条回路两条捷径都在图拓扑里，节点失败语义逐个有测试" |
+| "Agent 工具调用 / Function Calling" | app/data/sandbox.py（只读连接+语句守卫+超时 interrupt）+ app/mcp/（MCP Server） | "工具=SQL 沙箱，物理只读、黑名单、多语句拒绝，LLM 不可达" |
+| "RAG" | app/rag/example_store.py（问题→DSL 样例检索，TF-IDF 默认/chroma 可选） | "RAG 用来注入 few-shot 而不是召回文档，检索器可插拔" |
+| "SSE / 流式" | app/api/main.py /api/ask（node_done/event/final 三类帧） | "执行过程逐节点流式，前端流水线面板同源消费" |
+| "数据权限 / 合规" | dsl.py ROLE_SCOPES 编译期注入 + 原书 §5.3 四层防御 | "控制 SQL 生成端就从源头注入，改写任意 SQL 是出名的难题" |
+| "幻觉 / 质检" | agents/nodes.py check_numbers 数值核验 + QA 修订回路（消融 +58pp） | "质检器不能依赖被检对象——确定性核验才进得了 CI" |
+| "成本优化 / 缓存" | app/cache.py（同 DSL 指纹 + TTL/数据版本/编译 semver 三闸，压测 +12%） | "最便宜的 LLM 调用是不调用；role 参与指纹防权限破防" |
+| "多轮对话" | app/context.py（指代消解）+ graph.py clarify_suspend（interrupt 挂起） | "两种 HITL 语义对照：改写输入 vs 暂停等输入，开关独立" |
+| "评测体系 / prompt 迭代" | app/eval/runner.py + scripts/build_dataset_v2.py（金标可重建自检） | "三层评测 + holdout 纪律 + 消融开关，评测指挥了整个调优" |
+| "多数据源 / 语义层" | app/data/registry.py（DatasetSpec 注册表，coffee 实证上层零改动） | "维度/指标/词表全是可注册数据，图/节点/QA 无一行 if dataset" |
+| "可观测 / 治理" | /api/metrics token 看板 + app/audit.py 管理面审计（变更与审计同窗口）+ /api/feedback 反馈闭环 | "谁在何时通过什么改了什么可追溯——审计失败变更回滚" |
+
+## 3. 全流程实现走读（一次 `/api/ask` 的完整生命）
+
+完整七阶段流水线与逐请求走读见原书存档 §4（含三条回路两条捷径）；三扩展（缓存/消解/挂起）改写走读哪几步的全景 mermaid 见存档 §9.3。压缩版十步：①SSE 请求入 API（可选指代消解改写）→ ②router 纯代码预算路由定 depth → ③clarifier LLM 判 clear/refuse/clarify（挂起开关下反问可 interrupt 落盘）→ ④sql_agent 产 DSL → ⑤pydantic 枚举校验+编译器渲染 SQL（权限/时间锚点/LIMIT 注入）→ ⑥executor 沙箱只读执行（缓存闸在最前：命中直接回放）→ ⑦insight：drill_down 纯 SQL 算环比/维度分解，LLM 只拿事实写人话 → ⑧qa 逐数核验（编造→打回重写 ≤2 轮）→ ⑨finalizer 组装答案+SQL+口径+质检报告+数据徽章 → ⑩任务落盘 tasks.jsonl（回放/导出/审计全链可追溯）。
+
+## 4. 代码内化路线（含重写关卡）
+
+**阅读顺序**（每步带验证）：①scripts/demo.py 五问建立全局 → ②app/data/（schema→metrics→dsl→sandbox，数据侧白名单链）→ ③app/agents/nodes.py 七节点实现 → ④app/agents/graph.py 装配（对照原书 §4.3 回路图）→ ⑤app/api/main.py SSE 接线 → ⑥扩展三件套 cache.py/context.py/挂起装配（各配 ADR）→ ⑦tests/ 按模块对照。STUDY_GUIDE §4/§6 是本路线的展开版。
+
+**重写关卡**（判卷标准=对应测试文件，白板重写后跑绿才算过）：
+
+| 关卡 | 重写什么 | 判卷标准 |
+|---|---|---|
+| K1 | compile_sql 权限注入链（角色作用域→WHERE 注入→LIMIT 钳制） | tests/test_compiler.py + test_row_level_permission |
+| K2 | canonical_dsl 四层归一 + QueryCache 双闸时序（TTL 锁内→版本锁外→二次拿锁重查） | tests/test_cache.py 17 项 |
+| K3 | is_followup 三重门槛 + 两层实体归一 | tests/test_followup.py |
+| K4 | interrupt 挂起双态图（落盘→Command(resume)→节点重执行） | tests/test_clarify_suspend.py |
+| K5 | 管理面同窗口审计（变更→审计→失败回滚） | tests/test_audit.py |
+
+**必做实验**：改指标表达式看 semver 全缓存失效（test_semver_change_invalidates）、`scripts/eval_cache.py` 开关缓存逐条 diff、`--ablation no_qa/sloppy` 看质检闭环价值、`scripts/fault_inject.py --n 10` 看降级语义、`scripts/load_test.py` + `scripts/load_test_http.py` 对照进程内与 HTTP 全栈（c=1 差值=附加开销）。详见原书存档 §9.4。
+
+## 5. 面试深挖 10 问与追问防御
+
+每问格式：一句答案 → 追问三连锚点（行号）。逐题完整版在 INTERVIEW.md（16 问）。
+
+1. **"为什么不直接 NL2SQL？"**——白名单 DSL 让注入/幻觉表名在编译期不可达，DSL 可 diff 可单测。追问：值注入怎么防（转义+取值枚举双保险，dsl.py validate_filter_values）；表达力不够怎么办（明确拒答，80% 问题落在指标×维度×过滤×时间空间）；口径怎么统一（指标字典唯一来源，metrics.py）。
+2. **"100 万用户先崩在哪？"**——成本层先崩→意图缓存已实现（cache.py）；追问：缓存脏数据（三闸：TTL+数据版本+编译 semver，role 参与指纹）；评测集上零命中怎么办（诚实答：收益在生产高重复流量，盯 stats().hit_rate）；数据层崩（DuckDB 换数仓=编译器换 target）。
+3. **"编造数字怎么防？"**——确定性分层：归因数字全部 SQL 算，LLM 只拿事实写叙述；QA 逐数核验+修订回路。追问：消融证据（no_qa drill 12/12→5/12=+58pp）；核验器误判（日期/时长豁免，评测迭代第二轮）；核验器自己错了怎么办（确定性核验可单测，质检器不依赖被检对象）。
+4. **"多轮对话怎么设计？"**——两层：指代消解改写输入（保守规则，判不出走澄清兜底）+ 澄清挂起暂停等输入（interrupt+checkpointer）。追问：上下文存什么（一行问题文本，隐私面最小）；误判方向（宁可当独立问题不可答错）；与 miniagent 权限确认的对照（两种 HITL 挂起语义）。
+5. **"行级权限为什么做在编译层？"**——控制 SQL 生成端从源头注入，改写任意 SQL 可被 CTE/子查询绕过。追问：角色怎么建模（ROLE_SCOPES 声明式）；缓存会不会破权限（role 显式参与指纹，cache.py:111）；跨数据源呢（权限作用域随 DatasetSpec 声明）。
+6. **"LLM 挂了/返回垃圾怎么办？"**——指数退避重试+四节点降级语义（澄清放行/生成拒答/叙述留空/质检回退确定性）。追问：怎么证明（故障注入 6 场景×10 零崩溃）；SQL 超时（interrupt() 跨线程打断）；错误会不会被缓存（错误结果不缓存，仍走修复回路）。
+7. **"换个数据源要改多少代码？"**——零上层改动：DatasetSpec 注册表（维度/指标/取值白名单/NL 词表全声明式）。追问：证据（coffee 26/26 mock 100%，95 项存量测试零改动）；同 DSL 跨源缓存（数据集标识参与指纹，互不命中）；RAG 样例库边界（未按源隔离，诚实声明于 EVIDENCE §6）。
+8. **"怎么证明你的数字可信？"**——三层评测（单轮 116+多轮 64 轮+holdout 13）+金标由 compile_sql 生成可重建+mock/real 分列。追问：holdout 纪律（不参与调参，clarifier 校准只用 main split）；失败归因（94.8% 的 6 条逐条有 trace 归因）；评测污染怎么防（构建期自检 mock 可答性）。
+9. **"管理面操作怎么追溯？"**——审计日志：谁在何时通过什么改了什么，变更与审计同窗口落盘，审计写失败变更回滚。追问：agentgate 是 DB 同事务、askbi 无 DB 怎么翻译（同锁窗口+回滚，app/audit.py 模块头）；密钥会不会进审计（detail 只放计数/文件名/开关 from→to）；多 worker 边界（归档改名假定单 worker，PRODUCTION_GAP）。
+10. **"压测怎么做的，数字可信吗？"**——双口径：进程内（编排+SQL 本体）+ HTTP 全栈（uvicorn 真进程 SSE 全链）；c=1 差值=附加开销，health 地板检验客户端瓶颈。追问：为什么 c=1（高并发差值混入排队，agentgate 教训）；瓶颈归属（LLM 串行调用次数×延迟，HTTP 是常数项）；缓存收益（进程内 +12%，HTTP 口径复现见 evidence/load_test_http.md 表3）。
+
+## 6. 边界与演进（诚实声明）
+
+- 评测是 mock 可判定集（措辞对齐解析器词表），真实模型泛化上限由 real 报告失败明细界定；holdout 13 条不参与调参。
+- 未上生产：无真实 DAU/QPS，压测是 mock+模拟延迟形态；数据是固定种子合成（可复现是评测前提）。
+- DSL 表达力有边界（窗口函数/复杂嵌套不支持）——覆盖不了明确拒答。
+- RAG 样例库未按数据集隔离（真实 provider 下 coffee 问题会检索到电商 few-shot，mock 不受影响）；多轮词表取默认数据集（followup 默认关）。
+- 审计日志多 worker 部署注记：JSONL 追加多进程可交叉，任务清除归档改名假定单 worker 口径（PRODUCTION_GAP）。
+- 演进方向：LangGraph checkpointer 持久化（SqliteSaver/PostgresSaver）、sql_agent 升级原生 Function Calling、DuckDB 换数仓 target、RAG 样例库按源隔离。完整清单见原书存档 §8 与 PRODUCTION_GAP.md。
+
+---
+
+# 原书正文存档（2026-10 成书 + 10-28 扩展篇，原样保留）
+
 # AskBI 项目书
 
 > 本文是项目的完整技术叙事：业务背景 → 技术栈 → 整体流程 → 系统设计 → 具体实现 → 评测结果 → 边界与演进。

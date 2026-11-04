@@ -3,7 +3,7 @@
 > 对标腾讯云 ChatBI / 阿里瓴羊智能小Q 的多 Agent 对话式经营分析系统
 > **NL2DSL2SQL 受控查询 · 数值确定性 · 合规质检闭环 · 可判对错的评测**
 
-[![tests](https://img.shields.io/badge/tests-119%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
+[![tests](https://img.shields.io/badge/tests-129%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
 
 > **面试者/评审请从 [EVIDENCE.md](EVIDENCE.md) 开始**——做了什么/没做什么、三个真实 bug、分层评测表、逐条复现命令。
 
@@ -49,7 +49,7 @@ flowchart LR
 | 3 | **口径治理** | 指标字典给"毛利率"唯一权威表达式+版本化口径说明，答案自带口径 |
 | 4 | **安全沙箱** | 只读连接 + 语句守卫 + 行级权限（角色切换演示）+ LIMIT 强制 |
 | 5 | **歧义澄清 + 拒答** | 模糊问题反问而不是瞎猜；数据没有/要预测未来 → 明确拒答 |
-| 6 | **Eval 即 CI** | smoke 33 条回归集 + full 116 条分层集（含 15 条 holdout）+ 多轮 30 条，mock/real 双口径 + 消融开关 + 故障注入 |
+| 6 | **Eval 即 CI** | smoke 33 条回归集 + full 116 条分层集（含 13 条 holdout）+ 多轮 30 条，mock/real 双口径 + 消融开关 + 故障注入 |
 
 ## 快速开始
 
@@ -88,7 +88,7 @@ LLM_PROVIDER=deepseek DEEPSEEK_API_KEY=sk-... docker compose up
 ```bash
 python scripts/run_eval.py                                          # v1 smoke 回归集 33 条
 python scripts/run_eval.py --dataset eval/dataset_v2.json           # v2 full 分层集 116 条
-python scripts/run_eval.py --dataset eval/dataset_v2.json --split holdout   # 仅 holdout 15 条
+python scripts/run_eval.py --dataset eval/dataset_v2.json --split holdout   # 仅 holdout 13 条
 python scripts/run_eval.py --ablation sloppy                        # 模拟"LLM 编数字"，验证 QA 闭环拦截
 python scripts/run_eval.py --ablation no_qa                         # 关闭修订循环
 python scripts/build_dataset_v2.py --check                          # 金标自检（可重建评测集）
@@ -125,7 +125,7 @@ v2 分层集：80 query / 12 归因 / 12 澄清 / 12 拒答，**金标一律由 
 ## 可靠性证据（demo 只测 happy path，工程系统测失败路径）
 
 - **故障注入**（`evidence/fault_injection.md`）：LLM 瞬时故障/完全不可用/返回非法 JSON/SQL 超时/库文件缺失/编造指标，6 场景 ×10 次——**零崩溃**，全部诚实降级（拒答/留空叙述/回退确定性核验），客户端指数退避 + 节点降级语义 + SQL 修复循环 + 白名单守卫四层吸收。
-- **压测**（`evidence/load_test.md`）：进程内 12 点位矩阵（并发 10/25/50 × 缓存开关 × 模拟 LLM 延迟 0/300ms）。结论：编排上限 110-124 QPS；P95 ≈ 单请求 LLM 串行调用次数 × 单次延迟（light 2 次/full 4 次），**瓶颈在 LLM 不在检索/SQL**；压测还揪出并修复了缓存负收益真 bug（版本探测每 get 全表扫描 → 30s 记忆化，修复后 +12%）。
+- **压测双口径**：进程内 12 点位矩阵（`evidence/load_test.md`，10-28 存档）+ HTTP 全栈（uvicorn 真进程 SSE 全链，`evidence/load_test_http.md`，11-05 同机同日对照）。结论：编排上限 110-124 QPS；c=1 差值法 = HTTP 全栈附加开销 **5.1ms**（SSE 多帧净附加 ≈1.2ms）；delay=300ms 下 HTTP≈进程内 **0.92~0.97×**——瓶颈是 LLM 串行调用次数×延迟，框架附加被摊薄；delay=0 高并发 HTTP 0.53× 系客户端与服务端共址争抢 CPU 的伪影（诚实标注，不当容量上限）；缓存收益随瓶颈位置变化（c=1 +36% / 高并发 +3~4% / 10-28 进程内 +12%）；压测还揪出并修复了缓存负收益真 bug（版本探测每 get 全表扫描 → 30s 记忆化）。
 - **功能档位**：`PROFILE=conservative`（默认，实验功能全关零行为变化）/ `PROFILE=full`（一键演示）。`python scripts/demo_full.py` 四场景演示（缓存命中/澄清挂起恢复/三角色权限）。
 
 ## MCP：数据服务不止服务自己
@@ -146,15 +146,15 @@ app/
 ├── agents/     # LangGraph：路由/澄清/SQL/执行/归因/质检/组装 + 修订循环
 ├── rag/        # 问题→DSL 样例检索（TF-IDF 默认，chroma 可选）
 ├── mcp/        # 指标查询 MCP Server
-├── api/        # FastAPI：SSE 流式 / 任务回放 / token 看板 / 静态托管
+├── api/        # FastAPI：SSE 流式 / 任务回放 / token 看板 / 管理面(审计+配置+清除) / 静态托管
 └── eval/       # 评测 runner + 消融
 web/index.html  # 问数工作台（原生JS，无构建）
-tests/          # 76 项测试：守卫/编译/解析/端到端/API/QA/缓存/指代消解
+tests/          # 129 项测试：守卫/编译/解析/端到端/API/QA/缓存/消解/注册表/导出/审计
 ```
 
 ## 文档
 
-- [docs/PROJECT_BOOK.md](docs/PROJECT_BOOK.md) —— 项目书：业务背景、技术栈选型、整体流程、系统设计、模块地图、评测结果
+- [docs/PROJECT_BOOK.md](docs/PROJECT_BOOK.md) —— 项目书六节版（一页定位/技术栈/JD 映射/走读/内化+重写关卡/深挖 10 问）+ 原书正文存档
 - [docs/DESIGN.md](docs/DESIGN.md) —— 系统设计：确定性/不确定性决策表、选型对比（vs Vanna/WrenAI/DB-GPT）、失败降级矩阵、权限模型
 - [docs/STUDY_GUIDE.md](docs/STUDY_GUIDE.md) —— 代码学习指南：阅读顺序、模块分级（哪些要手写）、必做实验、面试追问树
 - [docs/RESUME.md](docs/RESUME.md) —— 简历项目描述（四要素 + 实测数字）

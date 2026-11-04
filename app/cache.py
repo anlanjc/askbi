@@ -20,14 +20,14 @@ import json
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
 
 import duckdb
 
 from .config import get_settings
-from .data.dsl import QueryDSL, _END_MONTH  # 与编译器共用同一时间锚点，避免两处漂移
+from .data.dsl import _END_MONTH, QueryDSL  # 与编译器共用同一时间锚点，避免两处漂移
 from .data.registry import DatasetSpec, get_spec
 
 # 指纹格式版本：规范化规则本身变化时递增，防止新旧语义混存
@@ -94,7 +94,7 @@ def _norm_filters(filters: list[dict]) -> list[dict]:
     for f in filters or []:
         value = f.get("value")
         if isinstance(value, list):
-            value = sorted((str(v) for v in value))
+            value = sorted(str(v) for v in value)
         elif value is not None:
             value = str(value)    # 评审 A4：1 与 "1" 同值异键 → 统一字符串化
         out.append({"field": f.get("field"), "op": f.get("op"), "value": value})
@@ -279,9 +279,24 @@ class QueryCache:
                 **self._counters,
             }
 
-    def clear(self) -> None:
+    def clear(self, audit: Callable[[dict], None] | None = None) -> dict:
+        """管理面缓存清空：条目清空 + 同窗口审计（"同事务"语义见 app/audit.py 模块头）。
+
+        审计回调写失败 → 条目原样恢复（含 LRU 顺序）并向上抛——缓存丢失本无害可重建，
+        但统一"审计失败=变更回滚"的语义，不给例外留口子。
+        """
         with self._lock:
+            snapshot = list(self._entries.items())
+            removed = len(snapshot)
             self._entries.clear()
+            info = {"removed": removed}
+            if audit is not None:
+                try:
+                    audit(info)
+                except Exception:
+                    self._entries.update(snapshot)
+                    raise
+            return info
 
     # ---- 内部 ----
     def _current_version(self) -> str:

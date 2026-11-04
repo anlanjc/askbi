@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from ..config import get_settings
@@ -19,6 +21,7 @@ class TaskStore:
         self.path = path or (get_settings().db_abs_path.parent / "tasks.jsonl")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._tasks: dict[str, dict] = {}
+        self._lock = threading.Lock()   # 守护管理面复合变更窗口（见 clear）
         self._load()
 
     def _load(self) -> None:
@@ -30,7 +33,7 @@ class TaskStore:
             try:
                 t = json.loads(line)
                 self._tasks[t["id"]] = t
-            except Exception:  # noqa: BLE001  # 损坏行跳过（追加日志的容错）
+            except Exception:  # noqa: BLE001, S112  # 损坏行跳过（追加日志的有意容错）
                 continue
 
     def create(self, question: str, role: str) -> dict:
@@ -75,6 +78,43 @@ class TaskStore:
     def _append(self, t: dict) -> None:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(t, ensure_ascii=False, default=str) + "\n")
+
+    def clear(self, audit: Callable[[dict], None] | None = None) -> dict:
+        """管理面任务清除：JSONL 归档改名 + 内存索引清空。
+
+        审计与变更在同一把锁窗口内先后落盘（"同事务"的 JSONL 翻译，语义见 app/audit.py
+        模块头）：审计回调写失败 → 立即回滚（归档文件改名回去 + 内存索引恢复）并向上抛，
+        不存在"改了但没记"或"记了但没改"的窗口。
+        """
+        with self._lock:
+            snapshot = dict(self._tasks)
+            removed = len(snapshot)
+            archived_to = self._rotate_file()
+            self._tasks.clear()
+            info = {"removed": removed, "archived_to": archived_to}
+            if audit is not None:
+                try:
+                    audit(info)
+                except Exception:
+                    self._restore_file(archived_to)
+                    self._tasks.update(snapshot)
+                    raise
+            return info
+
+    def _rotate_file(self) -> str:
+        """tasks.jsonl → tasks.jsonl.bak-<时间戳>-<随机>（归档可追溯，改名是原子操作）。"""
+        if not self.path.exists():
+            return ""
+        stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{uuid.uuid4().hex[:6]}"
+        dest = self.path.with_name(f"{self.path.name}.bak-{stamp}")
+        self.path.rename(dest)
+        return dest.name
+
+    def _restore_file(self, archived_to: str) -> None:
+        if archived_to:
+            dest = self.path.with_name(archived_to)
+            if dest.exists():
+                dest.rename(self.path)
 
     def list(self, limit: int = 50) -> list[dict]:
         items = sorted(self._tasks.values(), key=lambda x: x["created_at"], reverse=True)

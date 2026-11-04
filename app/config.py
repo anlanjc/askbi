@@ -55,13 +55,15 @@ class Settings(BaseSettings):
 
     # 服务
     api_key: str = ""
+    # 管理面门禁：留空=开放但全审计（演示友好，与 api_key 同哲学）；配置后 /api/admin/* 须带 X-Admin-Token
+    admin_token: str = ""
 
     @property
     def db_abs_path(self) -> Path:
         p = Path(self.db_path)
         return p if p.is_absolute() else PROJECT_ROOT / p
 
-    def model_post_init(self, __context) -> None:
+    def model_post_init(self, __context, /) -> None:
         """PROFILE=full 时为未显式配置的实验功能补默认开（显式配置永远优先）。
 
         只翻转"默认关"的三个实验开关，不碰安全/编排参数——

@@ -2,23 +2,26 @@
 
 from __future__ import annotations
 
+import hmac
 import json
-from langgraph.types import Command
 import time
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from langgraph.types import Command
 
 from ..agents.graph import get_graph
+from ..audit import get_audit_log
+from ..cache import get_query_cache
 from ..config import get_settings
 from ..data.registry import get_spec
 from ..data.schema import schema_prompt
 from ..export import answer_to_csv, export_filename
-from .schemas import AskRequest, FeedbackRequest
+from .schemas import AdminConfigRequest, AskRequest, FeedbackRequest
 from .task_store import get_task_store
 
 app = FastAPI(title="AskBI 问数引擎", version="0.1.0")
@@ -32,9 +35,13 @@ app.add_middleware(
 async def api_key_guard(request: Request, call_next):
     """可选 API Key：留空不启用（演示友好），配置后所有 /api 请求必须携带。"""
     key = get_settings().api_key
-    if key and request.url.path.startswith("/api") and request.url.path != "/api/health":
-        if request.headers.get("X-API-Key") != key:
-            return JSONResponse(status_code=401, content={"detail": "invalid or missing X-API-Key"})
+    if (
+        key
+        and request.url.path.startswith("/api")
+        and request.url.path != "/api/health"
+        and request.headers.get("X-API-Key") != key
+    ):
+        return JSONResponse(status_code=401, content={"detail": "invalid or missing X-API-Key"})
     return await call_next(request)
 
 
@@ -176,6 +183,76 @@ async def feedback(body: FeedbackRequest):
     if t is None:
         raise HTTPException(status_code=404, detail="task not found")
     return {"task_id": body.task_id, "feedback": t["feedback"]}
+
+
+# ---------------- 管理面（审计日志见 app/audit.py：谁在何时通过什么改了什么） ----------------
+
+def _require_admin(request: Request) -> None:
+    """管理面门禁：admin_token 配置后要求 X-Admin-Token（常量时间比较）；
+    留空=开放但全审计（演示友好，与 api_key 中间件同哲学）。"""
+    token = get_settings().admin_token
+    if token and not hmac.compare_digest(request.headers.get("X-Admin-Token", ""), token):
+        raise HTTPException(status_code=401, detail="invalid or missing X-Admin-Token")
+
+
+def _audit_fn(action: str, target_type: str, target_id: str):
+    """生成审计回调（agentgate _audit(db, ...) 的同窗体形态）：由各变更方法在其锁窗口内调用。"""
+    def _record(detail: dict) -> None:
+        get_audit_log().record("admin", action, target_type, target_id, detail)
+    return _record
+
+
+@app.post("/api/admin/tasks/clear")
+async def admin_tasks_clear(request: Request):
+    """清除全部任务：JSONL 归档改名（可追溯）+ 内存索引清空，审计同窗口落盘。
+
+    审计写失败（如磁盘满）→ 变更已回滚，向客户端显式 500。
+    """
+    _require_admin(request)
+    try:
+        info = get_task_store().clear(audit=_audit_fn("task.clear", "task_store", "*"))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"audit write failed; task clear rolled back ({e})")
+    return info
+
+
+@app.post("/api/admin/cache/clear")
+async def admin_cache_clear(request: Request):
+    """清空查询缓存（跨数据集全部条目），审计记录清空规模与清空前命中率。"""
+    _require_admin(request)
+    stats_before = get_query_cache().stats()
+    try:
+        info = get_query_cache().clear(audit=_audit_fn("cache.clear", "query_cache", "*"))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"audit write failed; cache clear rolled back ({e})")
+    return {**info, "enabled": stats_before["enabled"], "hit_rate_before": stats_before["hit_rate"]}
+
+
+@app.post("/api/admin/config")
+async def admin_config(body: AdminConfigRequest, request: Request):
+    """运行期配置变更（仅三个演示开关）：from→to 全程入审计；审计写失败回滚变更。"""
+    _require_admin(request)
+    provided = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not provided:
+        raise HTTPException(status_code=422, detail="no config fields provided")
+    s = get_settings()
+    changes = {k: {"from": getattr(s, k), "to": v} for k, v in provided.items()}
+    for k, v in provided.items():
+        setattr(s, k, v)
+    try:
+        get_audit_log().record("admin", "config.update", "settings", "*", {"changes": changes})
+    except Exception:  # noqa: BLE001  审计失败 → 写回原值（同事务语义，见 app/audit.py）
+        for k, old in changes.items():
+            setattr(s, k, old["from"])
+        raise HTTPException(status_code=500, detail="audit write failed; config change rolled back")
+    return {"applied": provided, "changes": changes}
+
+
+@app.get("/api/admin/audit")
+async def admin_audit_list(request: Request, limit: int = Query(default=100, ge=1, le=1000)):
+    """审计日志只读查询（最新在前）。"""
+    _require_admin(request)
+    return get_audit_log().list(limit=limit)
 
 
 @app.get("/api/schema")

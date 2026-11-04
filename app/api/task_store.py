@@ -62,6 +62,16 @@ class TaskStore:
         )
         self._append(t)
 
+    def set_feedback(self, task_id: str, value: str, comment: str = "") -> dict | None:
+        """thumbs 反馈：附着到任务并随任务一起追加落盘（重启可回放）。"""
+        t = self._tasks.get(task_id)
+        if t is None:
+            return None
+        t["feedback"] = {"value": value, "comment": comment,
+                         "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        self._append(t)
+        return t
+
     def _append(self, t: dict) -> None:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(t, ensure_ascii=False, default=str) + "\n")
@@ -76,7 +86,11 @@ class TaskStore:
     def usage_stats(self) -> dict:
         total_prompt = total_completion = 0
         by_node: dict[str, dict] = {}
+        feedback: dict[str, int] = {"up": 0, "down": 0}
         for t in self._tasks.values():
+            fb = (t.get("feedback") or {}).get("value")
+            if fb in feedback:
+                feedback[fb] += 1
             for node, u in (t.get("usage") or {}).items():
                 total_prompt += u.get("prompt_tokens", 0)
                 total_completion += u.get("completion_tokens", 0)
@@ -90,6 +104,7 @@ class TaskStore:
             "prompt_tokens": total_prompt,
             "completion_tokens": total_completion,
             "by_node": by_node,
+            "feedback": feedback,
         }
 
 

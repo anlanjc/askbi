@@ -44,3 +44,30 @@ async def test_task_recorded(client):
     assert tasks and tasks[0]["status"] == "done"
     detail = await client.get(f"/api/tasks/{tasks[0]['id']}")
     assert detail.json()["answer"]["kind"] == "answer"
+
+
+async def test_feedback_roundtrip(client):
+    """thumbs 反馈：落到任务 → 明细可见 → 指标汇总 → JSONL 回放恢复。"""
+    await client.post("/api/ask", json={"question": "上月销售额", "role": "boss"})
+    task_id = (await client.get("/api/tasks")).json()[0]["id"]
+
+    r = await client.post("/api/feedback", json={"task_id": task_id, "value": "up", "comment": "口径清楚"})
+    assert r.status_code == 200
+    assert r.json()["feedback"]["value"] == "up"
+
+    detail = (await client.get(f"/api/tasks/{task_id}")).json()
+    assert detail["feedback"]["comment"] == "口径清楚"
+
+    metrics = (await client.get("/api/metrics")).json()
+    assert metrics["feedback"]["up"] >= 1
+
+    from app.api.task_store import TaskStore
+    replayed = TaskStore().get(task_id)
+    assert replayed["feedback"]["value"] == "up"
+
+
+async def test_feedback_errors(client):
+    r = await client.post("/api/feedback", json={"task_id": "nonexistent", "value": "down"})
+    assert r.status_code == 404
+    r = await client.post("/api/feedback", json={"task_id": "x", "value": "middle"})
+    assert r.status_code == 422   # Literal["up","down"] 契约拒绝非法值

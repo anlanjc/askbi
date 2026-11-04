@@ -18,7 +18,7 @@ from ..config import get_settings
 from ..data.registry import get_spec
 from ..data.schema import schema_prompt
 from ..export import answer_to_csv, export_filename
-from .schemas import AskRequest
+from .schemas import AskRequest, FeedbackRequest
 from .task_store import get_task_store
 
 app = FastAPI(title="AskBI 问数引擎", version="0.1.0")
@@ -167,6 +167,15 @@ async def task_detail(task_id: str):
     if not t:
         raise HTTPException(status_code=404, detail="task not found")
     return t
+
+
+@app.post("/api/feedback")
+async def feedback(body: FeedbackRequest):
+    """thumbs 反馈：👍/👎 附着到任务，随任务落盘（指标看板 /api/metrics 可见汇总）。"""
+    t = get_task_store().set_feedback(body.task_id, body.value, body.comment)
+    if t is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return {"task_id": body.task_id, "feedback": t["feedback"]}
 
 
 @app.get("/api/schema")

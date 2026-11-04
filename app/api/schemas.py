@@ -17,6 +17,12 @@ class AskRequest(BaseModel):
     depth: Literal["", "light", "full"] = ""
 
 
+class FeedbackRequest(BaseModel):
+    task_id: str = Field(min_length=1)
+    value: Literal["up", "down"]
+    comment: str = Field(default="", max_length=200)
+
+
 class TaskSummary(BaseModel):
     id: str
     question: str

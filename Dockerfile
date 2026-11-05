@@ -16,4 +16,5 @@ RUN python scripts/gen_data.py
 EXPOSE 8000
 
 # 默认 mock 模式：无需 API key 即可体验全链路；配 key 时传 -e LLM_PROVIDER=deepseek -e DEEPSEEK_API_KEY=...
-CMD ["python", "-m", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Render 注入 PORT 环境变量，shell 形式展开 ${PORT:-8000}（本地默认 8000 不变）
+CMD ["sh", "-c", "python -m uvicorn app.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

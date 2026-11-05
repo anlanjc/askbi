@@ -3,7 +3,8 @@
 三层断言：
 1. 默认数据集逐位不变——DEFAULT_SPEC 引用原对象、prompt 逐字节一致、编译输出含原物理标识符；
 2. spec B（coffee）编译器单测——白名单/取值校验/跨源拒编译按 spec 生效；
-3. 同问题双数据源全链路——编译结果不同、schema prompt 不同、缓存互不命中。
+3. 同问题双数据源全链路——编译结果不同、schema prompt 不同、缓存互不命中；
+4. spec C（saas）第三数据源——三套物理模型（订单/小票/账单）证明编译器只依赖 spec。
 """
 
 from __future__ import annotations
@@ -15,10 +16,23 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import get_settings
-from app.data.dsl import CompileError, QueryDSL, TimeRange, build_dsl, compile_sql, validate_filter_values
+from app.data.dsl import (
+    CompileError,
+    QueryDSL,
+    TimeRange,
+    build_dsl,
+    compile_sql,
+    validate_filter_values,
+)
 from app.data.metrics import METRICS
 from app.data.registry import DEFAULT_SPEC, get_spec, register_spec, reset_specs
-from app.data.schema import BASE_FROM, DIMENSIONS, DIMENSION_VALUES, FILTER_FIELDS, schema_prompt
+from app.data.schema import (
+    BASE_FROM,
+    DIMENSION_VALUES,
+    DIMENSIONS,
+    FILTER_FIELDS,
+    schema_prompt,
+)
 
 TEST_DB_DIR = pathlib.Path(__file__).parent / "_db"
 
@@ -103,7 +117,7 @@ def test_coffee_compile_differs_from_default():
     assert "FROM ticket_lines tl JOIN tickets t" in sql
     assert "strftime('%Y-%m', t.sale_date)" in sql
     assert "销售额" in caliber and "不采集退款" in caliber
-    sql_s, cal_s = compile_sql(dsl, role="south", spec=spec)
+    sql_s, _cal_s = compile_sql(dsl, role="south", spec=spec)
     assert "s.region IN ('华南')" in sql_s          # 作用域表达式随 spec（A 是 o.region）
 
 
@@ -251,3 +265,133 @@ async def test_full_chain_coffee_drill(coffee_env):
     dims = {b["dimension"] for b in facts.get("维度分解", [])}
     assert "channel" not in dims          # 渠道已被过滤，分解只剩品类/大区
     assert {"category", "region"} <= dims
+
+# ---------------- 6. spec C（saas）第三数据源（11-05） ----------------
+
+
+def _saas():
+    return get_spec("saas")
+
+
+@pytest.fixture(scope="module")
+def db_path_c():
+    p = TEST_DB_DIR / "test_c.duckdb"
+    if not p.exists():
+        from app.data.generator_c import generate_c
+
+        generate_c(p, seed=42, months=12, end_month=get_settings().generator_end_month)
+    return p
+
+
+@pytest.fixture
+def saas_env(db_path_c):
+    """进程内切到数据集 C（测试库路径），结束后恢复默认。"""
+    from dataclasses import replace
+
+    import app.data.registry as reg
+    from app.data.dataset_c import SAAS_SPEC
+
+    reg.register_spec(replace(SAAS_SPEC, db_path=str(db_path_c)))
+    os.environ["DATASET"] = "saas"
+    get_settings.cache_clear()
+    yield
+    os.environ.pop("DATASET", None)
+    get_settings.cache_clear()
+    reg.reset_specs()
+
+
+def test_saas_registered_and_compiles():
+    spec = _saas()
+    dsl = build_dsl({"metric": "mrr", "time": {"mode": "last_n_months", "n": 1}}, spec)
+    sql, caliber = compile_sql(dsl, spec=spec)
+    assert "FROM invoice_lines l JOIN invoices i" in sql
+    assert "SUM(l.seats * l.unit_price)" in sql
+    assert "月经常性收入" in caliber
+    sql_s, _ = compile_sql(dsl, role="south", spec=spec)
+    assert "c.region IN ('华南')" in sql_s        # 作用域表达式随 spec（companies 别名 c）
+
+
+def test_saas_whitelist_enforced():
+    with pytest.raises(ValidationError):            # A 独有指标在 C 不可用
+        build_dsl({"metric": "refund_rate"}, _saas())
+    with pytest.raises(ValidationError):            # C 独有指标不在默认白名单
+        QueryDSL(metric="mrr")
+    with pytest.raises(ValidationError):            # C 独有维度
+        build_dsl({"metric": "mrr", "dimensions": ["industry"]}, DEFAULT_SPEC)
+
+
+def test_saas_filter_values_validated():
+    spec = _saas()
+    ok = build_dsl({"metric": "mrr", "filters": [{"field": "channel", "op": "=", "value": "代理"}]}, spec)
+    assert validate_filter_values(ok, spec) == []
+    bad = build_dsl({"metric": "mrr", "filters": [{"field": "tier", "op": "=", "value": "免费版"}]}, spec)
+    problems = validate_filter_values(bad, spec)
+    assert problems and "旗舰版" in problems[0]      # 提示可选值来自 spec C
+
+
+def test_mock_parser_uses_saas_vocab():
+    from app.llm.mock import _parse_question
+
+    spec = _saas()
+    d = _parse_question("代理渠道上月MRR", spec)
+    assert d["metric"] == "mrr"
+    assert {"field": "channel", "op": "=", "value": "代理"} in d["filters"]
+    d2 = _parse_question("上月付费客户数是多少", spec)
+    assert d2["metric"] == "company_count"
+    assert d2["filters"] == []                      # "客户数"不触发取值过滤（C 无客户规模维度）
+    d3 = _parse_question("各套餐档位的MRR", spec)
+    assert d3["dimensions"] == ["tier"]             # 长词优先：套餐档位命中 tier，不带入 plan
+
+
+def test_three_dataset_fingerprints_distinct():
+    """三个数据源同 role 指纹互异：数据集标识参与指纹。"""
+    from app.cache import fingerprint
+
+    ks = {
+        fingerprint({"metric": "revenue", "time": {"mode": "all"}}, "boss", "ecommerce"),
+        fingerprint({"metric": "revenue", "time": {"mode": "all"}}, "boss", "coffee"),
+        fingerprint({"metric": "mrr", "time": {"mode": "all"}}, "boss", "saas"),
+    }
+    assert len(ks) == 3
+
+
+def test_data_version_uses_saas_probe(db_path_c):
+    """版本探测 SQL 随数据集走：对 C 库跑默认 spec 的探测会直接报错。"""
+    import duckdb
+
+    from app.cache import data_version
+
+    v = data_version(db_path_c, _saas())
+    assert v.count("|") == 3
+    with pytest.raises(duckdb.CatalogException):
+        data_version(db_path_c)                     # 默认 spec 探测 orders 表
+
+
+@pytest.mark.asyncio
+async def test_full_chain_saas(saas_env):
+    """DATASET=saas 时同一条链路落到 C 的语义层与 C 库。"""
+    from app.agents.graph import run_ask
+
+    st = await run_ask("上个月的MRR是多少", role="boss")
+    assert st["answer"]["kind"] == "answer"
+    sql = st["answer"]["sql"]
+    assert "i.invoice_date" in sql and "invoice_lines" in sql
+    assert st["answer"]["table"]["rows"], "C 库上月应有 MRR"
+    assert "月经常性收入" in st["answer"]["caliber"]
+
+
+@pytest.mark.asyncio
+async def test_full_chain_saas_drill(saas_env):
+    """C 上归因链路（full 图）走通：drill_down 按 spec 的库与分解维度计算。"""
+    from app.agents.graph import run_ask
+
+    st = await run_ask("为什么上月旗舰版套餐的MRR增长", role="boss")
+    ans = st["answer"]
+    assert ans["kind"] == "answer"
+    assert ans.get("narrative"), "归因叙述不应为空"
+    assert (ans.get("qa") or {}).get("passed"), "QA 数值核验应通过"
+    facts = st.get("facts") or {}
+    assert facts.get("metric") == "MRR"
+    dims = {b["dimension"] for b in facts.get("维度分解", [])}
+    assert "tier" not in dims            # 档位已被过滤，分解只剩渠道/行业
+    assert {"channel", "industry"} <= dims

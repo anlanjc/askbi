@@ -9,7 +9,7 @@
    在模块导入时 register_spec 自注册（惰性加载避免循环导入）。
 
 什么保持全局（有意为之，见 ADR）：行级权限角色表 ROLE_SCOPES（作用域维度约定为
-region，两个数据集共享同一大区划分）、掩码列 MASKED_FIELDS（纵深防御不随数据集放松）、
+region，三个数据集共享同一大区划分）、掩码列 MASKED_FIELDS（纵深防御不随数据集放松）、
 mock 拒答词表（满意度/复购率等跨业务域通用的"未采集指标"）。
 """
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ..config import PROJECT_ROOT, get_settings
 from .metrics import METRICS, MetricDef
-from .schema import BASE_FROM, DIMENSIONS, DIMENSION_VALUES, FILTER_FIELDS
+from .schema import BASE_FROM, DIMENSION_VALUES, DIMENSIONS, FILTER_FIELDS
 
 
 @dataclass(frozen=True)
@@ -114,22 +114,27 @@ def register_spec(spec: DatasetSpec) -> None:
 def reset_specs() -> None:
     """测试用：清掉非内置 spec，恢复初始注册表。
 
-    注意必须直接重注册（而非依赖惰性 import）——dataset_b 模块导入一次后
+    注意必须直接重注册（而非依赖惰性 import）——dataset_b/dataset_c 模块导入一次后
     Python 会缓存模块，重跑其自注册代码不会发生。
     """
     global _BUILTINS_LOADED
     _SPECS.clear()
     _SPECS["ecommerce"] = DEFAULT_SPEC
     from .dataset_b import COFFEE_SPEC
+    from .dataset_c import SAAS_SPEC
 
     _SPECS["coffee"] = COFFEE_SPEC
+    _SPECS["saas"] = SAAS_SPEC
     _BUILTINS_LOADED = True
 
 
 def _ensure_builtins() -> None:
     global _BUILTINS_LOADED
     if not _BUILTINS_LOADED:
-        from . import dataset_b  # noqa: F401  导入即自注册 coffee
+        from . import (
+            dataset_b,  # noqa: F401  导入即自注册 coffee
+            dataset_c,  # noqa: F401  导入即自注册 saas
+        )
 
         _BUILTINS_LOADED = True
 

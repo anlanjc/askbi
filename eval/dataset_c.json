@@ -1,0 +1,205 @@
+{
+ "note": "数据集 C（B2B SaaS 订阅）评测集：金标由 compile_sql(spec=saas) 生成（scripts/build_dataset_c.py 可重建/自检），判分执行库为 data/askbi_c.duckdb。构成：{'clarify': 2, 'drill': 3, 'query': 18, 'refusal': 3}；全部 main split（C 集用于多数据源回归验证，无调参流程）。",
+ "items": [
+  {
+   "id": "c-001",
+   "kind": "query",
+   "question": "上个月的MRR是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-002",
+   "kind": "query",
+   "question": "上月席位数有多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(l.seats) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-003",
+   "kind": "query",
+   "question": "上月账单数有多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT i.invoice_id) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-004",
+   "kind": "query",
+   "question": "上月付费客户数是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT COUNT(DISTINCT i.company_id) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-005",
+   "kind": "query",
+   "question": "上月ARPU是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT (SUM(l.seats * l.unit_price)) / NULLIF(COUNT(DISTINCT i.company_id), 0) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-006",
+   "kind": "query",
+   "question": "最近3个月MRR是多少",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-007",
+   "kind": "query",
+   "question": "各套餐档位的MRR",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.tier AS tier, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE TRUE\nGROUP BY p.tier\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-008",
+   "kind": "query",
+   "question": "最近3个月各渠道MRR",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT i.channel AS channel, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH)\nGROUP BY i.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-009",
+   "kind": "query",
+   "question": "各档位毛利率",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.tier AS tier, ((SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost))) / NULLIF((SUM(l.seats * l.unit_price)), 0) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE TRUE\nGROUP BY p.tier\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-010",
+   "kind": "query",
+   "question": "MRR最高的行业",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT c.industry AS industry, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE TRUE\nGROUP BY c.industry\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-011",
+   "kind": "query",
+   "question": "MRR最低的套餐",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.plan_name AS plan, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE TRUE\nGROUP BY p.plan_name\nORDER BY value ASC\nLIMIT 100"
+  },
+  {
+   "id": "c-012",
+   "kind": "query",
+   "question": "近6个月各渠道MRR趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', i.invoice_date) AS month, i.channel AS channel, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY strftime('%Y-%m', i.invoice_date), i.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-013",
+   "kind": "query",
+   "question": "近6个月MRR趋势",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT strftime('%Y-%m', i.invoice_date) AS month, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY strftime('%Y-%m', i.invoice_date)\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-014",
+   "kind": "query",
+   "question": "代理渠道上月MRR",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND i.channel = '代理'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-015",
+   "kind": "query",
+   "question": "互联网行业上月毛利额",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT (SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost)) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.industry = '互联网'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-016",
+   "kind": "query",
+   "question": "旗舰版套餐最近3个月的MRR",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT p.plan_name AS plan, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (2) MONTH) AND p.tier = '旗舰版'\nGROUP BY p.plan_name\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-017",
+   "kind": "query",
+   "question": "2025年1月到6月的MRR",
+   "role": "boss",
+   "split": "main",
+   "gold_sql": "SELECT SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= '2025-01' AND strftime('%Y-%m', i.invoice_date) <= '2025-06'\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-018",
+   "kind": "query",
+   "question": "上月各渠道MRR",
+   "role": "south",
+   "split": "main",
+   "gold_sql": "SELECT i.channel AS channel, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.region IN ('华南')\nGROUP BY i.channel\nORDER BY value DESC\nLIMIT 100"
+  },
+  {
+   "id": "c-019",
+   "kind": "drill",
+   "question": "为什么上月旗舰版套餐的MRR增长",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "c-020",
+   "kind": "drill",
+   "question": "上个月整体毛利率为什么下滑",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "c-021",
+   "kind": "drill",
+   "question": "分析上月各渠道的MRR结构",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "c-022",
+   "kind": "clarify",
+   "question": "卖得怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "c-023",
+   "kind": "clarify",
+   "question": "上个月卖得怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "c-024",
+   "kind": "refusal",
+   "question": "预测下季度的MRR",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "c-025",
+   "kind": "refusal",
+   "question": "客户满意度怎么样",
+   "role": "boss",
+   "split": "main"
+  },
+  {
+   "id": "c-026",
+   "kind": "refusal",
+   "question": "写一段上月经营总结",
+   "role": "boss",
+   "split": "main"
+  }
+ ]
+}

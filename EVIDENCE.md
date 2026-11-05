@@ -16,7 +16,7 @@
 1. **为什么不直接 NL2SQL**：LLM 只产出白名单约束的 DSL（枚举校验），物理 SQL 由编译器渲染——注入/幻觉表名在编译期不可达；DSL 可 diff 可单测，行级权限/LIMIT 策略编译期统一注入。
 2. **为什么 QA 闭环值得做**：反向消融实证——关掉质检 100%→93.9%（关叙述)/90.9%(关质检)，6.1pp 是每个模块必要性的数字证据。
 3. **为什么缓存默认关 + PROFILE 档位**：实验功能保守上线（零行为变化可回滚），PROFILE=full 一键演示——压测同时证明缓存修复后 +12% 吞吐，档位与证据互相背书。
-4. **为什么语义层做成可注册数据源（AB-3）**：语义层（维度/指标/取值白名单/NL 词表）从模块级常量升级为 DatasetSpec 注册表——新增物理表结构完全不同的数据集 B（线下连锁咖啡，tickets/ticket_lines/stores/skus），**上层零改动**（图/节点/QA/评测/MCP 无一行 if dataset）；DEFAULT_SPEC 引用原常量对象 + 全部新参数带默认值，95 项存量测试零改动全绿、v1/v2 mock 100% 重跑作回归裁判。"支持多数据源接入"从口号变成可复现实证。ADR：docs/registry_adr.md。
+4. **为什么语义层做成可注册数据源（AB-3，11-05 扩展到第三源）**：语义层（维度/指标/取值白名单/NL 词表）从模块级常量升级为 DatasetSpec 注册表——数据集 B（线下连锁咖啡，tickets/ticket_lines）与数据集 C（B2B SaaS 订阅，invoices/invoice_lines，11-05）物理表结构完全不同，**上层零改动**（图/节点/QA/评测/MCP 无一行 if dataset）；DEFAULT_SPEC 引用原常量对象 + 全部新参数带默认值，95 项存量测试零改动全绿、v1/v2 mock 100% 重跑作回归裁判。三源三套物理模型证明编译器只依赖 spec 声明。"支持多数据源接入"从口号变成可复现实证。ADR：docs/registry_adr.md。
 
 ## 3. 三个真实 bug（含复现与修复）
 
@@ -35,12 +35,13 @@
 | holdout 盲测 | 13 条 | run1 84.6% / run2 **100%**（失败均为 drill 类运行间波动，主跑同题全 ✓） | 真实口径 ≈92.3%±波动 |
 | **no_qa 消融（real）** | v2 116 条 | **93.1%**：drill **5/12=42%**（vs 主跑 12/12）——**QA 修订循环在 drill 类价值 +58pp**；叙述数值一致率 100%→95.5%；refusal/clarify 校准后无 QA 也 12/12 | 成本 544,462 token；v2-078 失败经 trace 定位=**维度顺序漂移**（非语义错）→ 判分已修为列序无关 |
 | 多轮 | 30 条 64 轮 | mock **100%**（AB-2 口径）；real **24/30 条目、57/64 轮=89.1%**（10-29，221,065 token）：**机制场景全绿**——指代消解 16/17+时间追问 6/6+组合 3/3+缓存复问 10/10（命中 4/4）+澄清流 4/4+行级权限多轮 6/6+无上下文 1/1；失败 7 轮全在**边界探针**（fallback/词表边界/多实体守卫——mock 期望编码 mock 的保守规则，真实模型边界判断不同，属预期差异非机制缺陷） | evidence/multiturn_report_real.md |
-| **多数据源（AB-3）** | B 集 26 条（18 query/3 归因/2 澄清/3 拒答，咖啡域） | mock **100%**（26/26，DATASET=coffee 全链路落 B 库）；金标由 compile_sql(spec=coffee) 生成+构建期自检 | 语义层解耦实证；同问题双源 SQL/结果不同、缓存互不命中 |
+| **多数据源 B（AB-3）** | B 集 26 条（18 query/3 归因/2 澄清/3 拒答，咖啡域） | mock **100%**（26/26，DATASET=coffee 全链路落 B 库）；金标由 compile_sql(spec=coffee) 生成+构建期自检 | 语义层解耦实证；同问题多源 SQL/结果不同、缓存互不命中 |
+| **多数据源 C（11-05）** | C 集 26 条（18 query/3 归因/2 澄清/3 拒答，B2B SaaS 订阅域） | mock **100%**（26/26，DATASET=saas 全链路落 C 库，data/askbi_c.duckdb ~1.5 万账单）；金标由 compile_sql(spec=saas) 生成+构建期自检——**自检真抓出 1 条**：tier 词表"档位"首词命中顺序导致"各套餐档位"混入 plan 维，长词前置修复 | 三源三套物理模型（订单/小票/账单）证编译器只依赖 spec；drill 分解维度随 spec.drill_dims |
 | 故障注入 | 6 场景 ×10 | 零崩溃，全部诚实降级 | evidence/fault_injection.md |
 | 压测（进程内） | 12 点位矩阵 | 编排上限 110-124 QPS；300ms 模拟延迟下 P50≈1.2s≈4×LLM（10-28 存档，11-05 同日复测 ±4% 内复现） | evidence/load_test.md |
 | **压测（HTTP 全栈双口径）** | 22 点位（进程内 vs uvicorn 真进程 SSE 全链，11-05） | c=1 差值法附加开销 **5.1ms**（框架地板 3.9ms + SSE 净附加 ≈1.2ms）；delay=300ms 下 HTTP≈进程内 **0.92~0.97×**（瓶颈=LLM 串行调用，框架被摊薄）；delay=0 高并发 0.53× 系**共址 CPU 争抢伪影**（诚实标注）；缓存收益随瓶颈位置变化（c=1 +36% / 高并发 +3~4%） | evidence/load_test_http.md |
 
-pytest：**129 项全绿**（11-05 实测；最新增量 = 管理面审计 8 项，tests/test_audit.py；此前基线 121 绿）。金标生成：`scripts/build_dataset_v2.py` / `scripts/build_dataset_b.py`（可重建/自检）。
+pytest：**137 项全绿**（11-05 实测；最新增量 = 管理面审计 8 项 + 数据源 C 8 项）。金标生成：`scripts/build_dataset_v2.py` / `scripts/build_dataset_b.py` / `scripts/build_dataset_c.py`（可重建/自检）。
 
 ## 5. 复现命令
 
@@ -73,6 +74,11 @@ python scripts/gen_data_b.py                 # 生成 B 库（~5 万行，种子
 DATASET=coffee LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_b.json   # B 集 26 条
 python scripts/build_dataset_b.py --check    # B 金标自检（compile_sql(spec=coffee) 同源）
 
+# 第三数据源（11-05：B2B SaaS 订阅，同 DATASET 机制）
+python scripts/gen_data_c.py                 # 生成 C 库（~1.5 万账单明细，种子 42，三业务故事可归因）
+DATASET=saas LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_c.json     # C 集 26 条
+python scripts/build_dataset_c.py --check    # C 金标自检（compile_sql(spec=saas) 同源）
+
 # 真模型（需 DashScope key 于 .env；系统代理半死时先 NO_PROXY）
 LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset_v2.json
 ```
@@ -82,7 +88,7 @@ LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset
 - 评测是 mock 可判定集（措辞对齐解析器词表），真实模型泛化上限由 real 报告的失败明细界定；holdout 15 条不参与调参。
 - 多轮 followup 的渠道词表已收敛到 DIMENSION_VALUES 单一来源；"换成 X 渠道"重复后缀 bug 已修复（AB-2 评审发现）。
 - clarify_suspend 需 API 层 thread_id/resume（图内 run_ask 不挂起）——多轮评测脚本按此适配（ADR 见 docs/multiturn_adr.md）。
-- 第二数据源适配器已落地（registry_adr.md）：B 数据集共享全局 ROLE_SCOPES（同一大区划分）；RAG 样例库未按数据集隔离（真实 provider 下 B 问题会检索到电商 few-shot，mock 不受影响）；多轮指代消解词表仍取默认数据集（followup 默认关闭，边界如实声明）。
+- 第二/第三数据源适配器已落地（registry_adr.md）：B/C 数据集共享全局 ROLE_SCOPES（同一大区划分）；RAG 样例库未按数据集隔离（真实 provider 下 B/C 问题会检索到电商 few-shot，mock 不受影响）；多轮指代消解词表仍取默认数据集（followup 默认关闭，边界如实声明）。
 - 管理面审计日志（11-05）："同事务"语义由 JSONL 翻译实现——变更与审计同锁窗口落盘、审计写失败变更回滚（app/audit.py 模块头有完整推导）；任务清除的归档改名假定单 worker 部署口径，多 worker 管理面属 PRODUCTION_GAP；ADMIN_TOKEN 留空=开放但全审计（与 api_key 同哲学）。
 - HTTP 全栈压测（11-05）：客户端与 uvicorn 同机共址，delay=0 高并发点位 QPS 受 CPU 争抢压制（0.53×），**不当服务端容量上限使用**；delay=300ms（真实形态近似）下 0.92~0.97× 才是部署参考口径。
 - 下一步：200+ 条评测集、RAG 样例库按数据集隔离、真实部署与灰度。

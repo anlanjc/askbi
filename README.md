@@ -3,7 +3,7 @@
 > 对标腾讯云 ChatBI / 阿里瓴羊智能小Q 的多 Agent 对话式经营分析系统
 > **NL2DSL2SQL 受控查询 · 数值确定性 · 合规质检闭环 · 可判对错的评测**
 
-[![tests](https://img.shields.io/badge/tests-129%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
+[![tests](https://img.shields.io/badge/tests-137%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
 
 > **面试者/评审请从 [EVIDENCE.md](EVIDENCE.md) 开始**——做了什么/没做什么、三个真实 bug、分层评测表、逐条复现命令。
 
@@ -149,7 +149,7 @@ app/
 ├── api/        # FastAPI：SSE 流式 / 任务回放 / token 看板 / 管理面(审计+配置+清除) / 静态托管
 └── eval/       # 评测 runner + 消融
 web/index.html  # 问数工作台（原生JS，无构建）
-tests/          # 129 项测试：守卫/编译/解析/端到端/API/QA/缓存/消解/注册表/导出/审计
+tests/          # 137 项测试：守卫/编译/解析/端到端/API/QA/缓存/消解/注册表(三源)/导出/审计
 ```
 
 ## 文档
@@ -178,19 +178,21 @@ tests/          # 129 项测试：守卫/编译/解析/端到端/API/QA/缓存/�
 
 ## 多数据源接入（语义层注册表，AB-3）
 
-语义层不是硬编码：**维度/指标/取值白名单/NL 词表全部是可注册数据**（`app/data/registry.py` 的 `DatasetSpec`），编译器、提示词、DSL 校验、缓存指纹从 spec 取值，上层（图/节点/QA/评测 runner/MCP）零感知。仓库内置两套数据源自证"换数据源不改上层"：
+语义层不是硬编码：**维度/指标/取值白名单/NL 词表全部是可注册数据**（`app/data/registry.py` 的 `DatasetSpec`），编译器、提示词、DSL 校验、缓存指纹从 spec 取值，上层（图/节点/QA/评测 runner/MCP）零感知。仓库内置三套数据源、三套互不相同的物理模型，自证"换数据源不改上层"：
 
-| | ecommerce（默认） | coffee（数据集 B） |
-|---|---|---|
-| 业务域 | 电商交易（orders/order_items/products/customers） | 线下连锁咖啡（tickets/ticket_lines/stores/skus） |
-| 指标集 | 9 个（含退货率/净销售额） | 7 个（含消费会员数，不含退货类） |
-| 维度 | 品类/渠道/会员等级… | 门店/店型/细分品类/堂食·外带·外卖… |
-| 业务故事 | 美妆促销拉低毛利率、直播占比上升 | **外卖占比逐月上升**（15%→45%）、烘焙毛利率高于饮品 |
+| | ecommerce（默认） | coffee（数据集 B） | saas（数据集 C） |
+|---|---|---|---|
+| 业务域 | 电商交易（orders/order_items/products/customers） | 线下连锁咖啡（tickets/ticket_lines/stores/skus） | B2B SaaS 订阅（invoices/invoice_lines/companies/plans） |
+| 指标集 | 9 个（含退货率/净销售额） | 7 个（含消费会员数，不含退货类） | 7 个（MRR/ARPU/席位数/付费客户数…） |
+| 维度 | 品类/渠道/会员等级… | 门店/店型/细分品类/堂食·外带·外卖… | 行业/套餐档位/公司/直销·代理·自助… |
+| 业务故事 | 美妆促销拉低毛利率、直播占比上升 | **外卖占比逐月上升**（15%→45%）、烘焙毛利率高于饮品 | **旗舰版占比逐月上升**（20%→40%）、代理渠道毛利率低于直销（折扣 0.85）、年末预算季放量 |
 
 ```bash
 python scripts/gen_data_b.py                # 生成 B 库（~5 万行小票明细，固定种子）
+python scripts/gen_data_c.py                # 生成 C 库（~1.5 万账单明细，固定种子）
 DATASET=coffee python scripts/run_eval.py --dataset eval/dataset_b.json   # B 集评测（mock 26/26）
-DATASET=coffee python -m uvicorn app.api.main:app            # 整个服务切到咖啡数据源
+DATASET=saas   python scripts/run_eval.py --dataset eval/dataset_c.json   # C 集评测（mock 26/26）
+DATASET=saas   python -m uvicorn app.api.main:app            # 整个服务切到 SaaS 数据源
 ```
 
-切换 = 一个环境变量（`DATASET=coffee`，默认 `ecommerce`）；同 DSL 不同源**缓存互不命中**（数据集标识参与指纹，版本探测 SQL 也随 spec 走）。默认数据集行为逐位不变：95 项既有测试零改动全绿、v1/v2 双评测集 mock 100% 重跑作为回归裁判。设计决策、spec 与全局的边界划分、三个失败模式见 `docs/registry_adr.md`；15 项测试在 `tests/test_registry.py`（含同问题双数据源全链路与缓存隔离）。
+切换 = 一个环境变量（`DATASET=coffee|saas`，默认 `ecommerce`）；同 DSL 不同源**缓存互不命中**（数据集标识参与指纹，版本探测 SQL 也随 spec 走）。默认数据集行为逐位不变：95 项既有测试零改动全绿、v1/v2 双评测集 mock 100% 重跑作为回归裁判。设计决策、spec 与全局的边界划分、三个失败模式见 `docs/registry_adr.md`；23 项测试在 `tests/test_registry.py`（含同问题多数据源全链路、drill 归因与缓存隔离，B/C 双源覆盖）。

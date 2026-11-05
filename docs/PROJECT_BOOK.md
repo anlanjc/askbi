@@ -13,20 +13,20 @@
 
 **组合叙事**：检索增强（policy-compass）→ **工具编排与数值可信（askbi，本仓库）** → 底层引擎（miniagent）→ 评测量化（agenteval）→ 认知记忆（memomind）→ 网关与多租户（agentgate）。askbi 承担的位置是"多 Agent 协作 + 结果可信"：policy-compass 证明检索正确，askbi 证明**数字正确**。
 
-**简历一句话版**：多 Agent 对话式 BI（LangGraph 七节点 + NL2DSL2SQL 受控编译 + DuckDB 只读沙箱，129 项测试）：v2 分层集 116 条 real 94.8%（数值一致率 100%）、13 条 holdout 盲测不参与调参、关质检消融归因类 12/12→5/12（QA 闭环 +58pp）、多轮 30 条 64 轮 mock 100%、故障注入 6 场景×10 零崩溃、双数据源上层零改动（DatasetSpec 注册表）、管理面审计日志（变更与审计同窗口落盘）。
+**简历一句话版**：多 Agent 对话式 BI（LangGraph 七节点 + NL2DSL2SQL 受控编译 + DuckDB 只读沙箱，137 项测试）：v2 分层集 116 条 real 94.8%（数值一致率 100%）、13 条 holdout 盲测不参与调参、关质检消融归因类 12/12→5/12（QA 闭环 +58pp）、多轮 30 条 64 轮 mock 100%、故障注入 6 场景×10 零崩溃、三数据源上层零改动（DatasetSpec 注册表：订单/小票/账单三套物理模型）、管理面审计日志（变更与审计同窗口落盘）。
 
 **数字台账（全部实跑口径，mock 与 real 严格分列）**：
 
 | 层 | 数字 | 出处 |
 |---|---|---|
-| 测试 | pytest **129 项全绿** | `python -m pytest -q` |
+| 测试 | pytest **137 项全绿** | `python -m pytest -q` |
 | 单轮 real | v1 33 条 **100%**；v2 116 条 **94.8%**（110/116，数值一致率 100%；query 79/80 · drill 12/12 · clarify 12/12 · refusal 7/12，成本 560,550 token） | eval/report_openai_compatible_dataset_v2.md |
 | 单轮 mock | v1 33 条 **100%** / v2 116 条 **100%**（金标由 compile_sql 生成+构建期自检） | eval/report_mock_dataset_v2.md |
 | **holdout 纪律** | 13 条 holdout **盲测两轮 84.6%/100%**，**不参与调参**——clarifier 校准只用 main split 失败信号 | eval/report_openai_compatible_dataset_v2_holdout*.md |
 | 消融 | 关 QA 修订循环 real **93.1%**：drill **12/12→5/12**（**QA 闭环 +58pp**）、数值一致率 100%→95.5% | eval/report_openai_compatible_dataset_v2_no_qa.md |
 | 多轮 | 30 条 64 轮：mock **100%**；real **24/30 条目、57/64 轮=89.1%**（机制场景全绿：指代消解 16/17、缓存复问 10/10、行级权限 6/6；失败全在边界探针=预期差异） | evidence/multiturn_report_real.md |
 | 可靠性 | 故障注入 6 场景×10 次**零崩溃**；压测双口径：进程内 110-124 QPS（10-28 存档）+ HTTP 全栈（11-05，[evidence/load_test_http.md](../evidence/load_test_http.md)） | evidence/ |
-| 多数据源 | coffee B 集 26 条 mock **100%**（DATASET=coffee 一键切换，上层零改动） | eval/report_mock_dataset_b.md |
+| 多数据源 | coffee B 集 26 条 mock **100%** + saas C 集 26 条 mock **100%**（DATASET=coffee|saas 一键切换，三源三套物理模型上层零改动；C 集构建期自检真抓出 tier 词表首词命中顺序 1 条） | eval/report_mock_dataset_b.md / report_mock_dataset_c.md |
 | ADR 清单 | [adr.md](adr.md) ADR-1~5（DSL 层/DuckDB/QA 确定性/预算路由/MCP）+ [cache_adr.md](cache_adr.md) + [followup_adr.md](followup_adr.md) + [clarify_suspend_adr.md](clarify_suspend_adr.md) + [multiturn_adr.md](multiturn_adr.md) + [registry_adr.md](registry_adr.md)；导出（app/export.py）与 thumbs 反馈闭环无独立 ADR，实现决策记录在 [EVIDENCE.md §1](../EVIDENCE.md) | docs/ |
 
 ## 1. 技术栈全景（每一层"选了什么、为什么、放弃了什么"）
@@ -47,7 +47,7 @@
 | "成本优化 / 缓存" | app/cache.py（同 DSL 指纹 + TTL/数据版本/编译 semver 三闸，压测 +12%） | "最便宜的 LLM 调用是不调用；role 参与指纹防权限破防" |
 | "多轮对话" | app/context.py（指代消解）+ graph.py clarify_suspend（interrupt 挂起） | "两种 HITL 语义对照：改写输入 vs 暂停等输入，开关独立" |
 | "评测体系 / prompt 迭代" | app/eval/runner.py + scripts/build_dataset_v2.py（金标可重建自检） | "三层评测 + holdout 纪律 + 消融开关，评测指挥了整个调优" |
-| "多数据源 / 语义层" | app/data/registry.py（DatasetSpec 注册表，coffee 实证上层零改动） | "维度/指标/词表全是可注册数据，图/节点/QA 无一行 if dataset" |
+| "多数据源 / 语义层" | app/data/registry.py（DatasetSpec 注册表，coffee+saas 双实证上层零改动） | "维度/指标/词表全是可注册数据，图/节点/QA 无一行 if dataset" |
 | "可观测 / 治理" | /api/metrics token 看板 + app/audit.py 管理面审计（变更与审计同窗口）+ /api/feedback 反馈闭环 | "谁在何时通过什么改了什么可追溯——审计失败变更回滚" |
 
 ## 3. 全流程实现走读（一次 `/api/ask` 的完整生命）
@@ -80,7 +80,7 @@
 4. **"多轮对话怎么设计？"**——两层：指代消解改写输入（保守规则，判不出走澄清兜底）+ 澄清挂起暂停等输入（interrupt+checkpointer）。追问：上下文存什么（一行问题文本，隐私面最小）；误判方向（宁可当独立问题不可答错）；与 miniagent 权限确认的对照（两种 HITL 挂起语义）。
 5. **"行级权限为什么做在编译层？"**——控制 SQL 生成端从源头注入，改写任意 SQL 可被 CTE/子查询绕过。追问：角色怎么建模（ROLE_SCOPES 声明式）；缓存会不会破权限（role 显式参与指纹，cache.py:111）；跨数据源呢（权限作用域随 DatasetSpec 声明）。
 6. **"LLM 挂了/返回垃圾怎么办？"**——指数退避重试+四节点降级语义（澄清放行/生成拒答/叙述留空/质检回退确定性）。追问：怎么证明（故障注入 6 场景×10 零崩溃）；SQL 超时（interrupt() 跨线程打断）；错误会不会被缓存（错误结果不缓存，仍走修复回路）。
-7. **"换个数据源要改多少代码？"**——零上层改动：DatasetSpec 注册表（维度/指标/取值白名单/NL 词表全声明式）。追问：证据（coffee 26/26 mock 100%，95 项存量测试零改动）；同 DSL 跨源缓存（数据集标识参与指纹，互不命中）；RAG 样例库边界（未按源隔离，诚实声明于 EVIDENCE §6）。
+7. **"换个数据源要改多少代码？"**——零上层改动：DatasetSpec 注册表（维度/指标/取值白名单/NL 词表全声明式）。追问：证据（coffee 26/26 + saas 26/26 mock 双 100%，95 项存量测试零改动）；同 DSL 跨源缓存（数据集标识参与指纹，互不命中）；RAG 样例库边界（未按源隔离，诚实声明于 EVIDENCE §6）。
 8. **"怎么证明你的数字可信？"**——三层评测（单轮 116+多轮 64 轮+holdout 13）+金标由 compile_sql 生成可重建+mock/real 分列。追问：holdout 纪律（不参与调参，clarifier 校准只用 main split）；失败归因（94.8% 的 6 条逐条有 trace 归因）；评测污染怎么防（构建期自检 mock 可答性）。
 9. **"管理面操作怎么追溯？"**——审计日志：谁在何时通过什么改了什么，变更与审计同窗口落盘，审计写失败变更回滚。追问：agentgate 是 DB 同事务、askbi 无 DB 怎么翻译（同锁窗口+回滚，app/audit.py 模块头）；密钥会不会进审计（detail 只放计数/文件名/开关 from→to）；多 worker 边界（归档改名假定单 worker，PRODUCTION_GAP）。
 10. **"压测怎么做的，数字可信吗？"**——双口径：进程内（编排+SQL 本体）+ HTTP 全栈（uvicorn 真进程 SSE 全链）；c=1 差值=附加开销，health 地板检验客户端瓶颈。追问：为什么 c=1（高并发差值混入排队，agentgate 教训）；瓶颈归属（LLM 串行调用次数×延迟，HTTP 是常数项）；缓存收益（进程内 +12%，HTTP 口径复现见 evidence/load_test_http.md 表3）。
@@ -90,7 +90,7 @@
 - 评测是 mock 可判定集（措辞对齐解析器词表），真实模型泛化上限由 real 报告失败明细界定；holdout 13 条不参与调参。
 - 未上生产：无真实 DAU/QPS，压测是 mock+模拟延迟形态；数据是固定种子合成（可复现是评测前提）。
 - DSL 表达力有边界（窗口函数/复杂嵌套不支持）——覆盖不了明确拒答。
-- RAG 样例库未按数据集隔离（真实 provider 下 coffee 问题会检索到电商 few-shot，mock 不受影响）；多轮词表取默认数据集（followup 默认关）。
+- RAG 样例库未按数据集隔离（真实 provider 下 coffee/saas 问题会检索到电商 few-shot，mock 不受影响）；多轮词表取默认数据集（followup 默认关）。
 - 审计日志多 worker 部署注记：JSONL 追加多进程可交叉，任务清除归档改名假定单 worker 口径（PRODUCTION_GAP）。
 - 演进方向：LangGraph checkpointer 持久化（SqliteSaver/PostgresSaver）、sql_agent 升级原生 Function Calling、DuckDB 换数仓 target、RAG 样例库按源隔离。完整清单见原书存档 §8 与 PRODUCTION_GAP.md。
 

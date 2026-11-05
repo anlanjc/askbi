@@ -3,7 +3,22 @@
 > 对标腾讯云 ChatBI / 阿里瓴羊智能小Q 的多 Agent 对话式经营分析系统
 > **NL2DSL2SQL 受控查询 · 数值确定性 · 合规质检闭环 · 可判对错的评测**
 
-[![tests](https://img.shields.io/badge/tests-137%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
+[![CI](https://github.com/anlanjc/askbi/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/askbi/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-137%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
+
+## 架构总览
+
+```mermaid
+flowchart LR
+    U[用户<br/>多轮口语问数] --> API[FastAPI SSE<br/>多轮指代消解]
+    API --> G{{LangGraph 多 Agent 编排}}
+    G --> P[planner 规划] --> NL[语义层编译<br/>NL2DSL 八类谓词]
+    NL --> SB[沙箱执行 SQL<br/>DuckDB 行级权限]
+    SB --> QA{{数值质检闭环<br/>确定性核验+LLM 审计}}
+    QA --> IN[insight 归因] --> FIN[finalizer 组装<br/>Vega 图+导出]
+    CACHE[(查询缓存<br/>指纹回放)] -.->|命中| SB
+    REG[(数据源注册表<br/>A/B/C 三源)] --> SB
+    AUD[(审计日志<br/>同事务 JSONL)] -.-> API
+```
 
 > **面试者/评审请从 [EVIDENCE.md](EVIDENCE.md) 开始**——做了什么/没做什么、三个真实 bug、分层评测表、逐条复现命令。
 

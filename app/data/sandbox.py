@@ -23,9 +23,13 @@ from .schema import MASKED_FIELDS
 
 _FORBIDDEN = re.compile(
     r"\b(insert|update|delete|drop|alter|create|attach|detach|copy|export|import|"
-    r"pragma|call|set|prepare|execute|vacuum|checkpoint)\b",
+    r"pragma|call|set|prepare|execute|vacuum|checkpoint|"
+    r"read_csv|read_csv_auto|read_text|read_blob|read_json|glob|install|load)\b",
     re.IGNORECASE,
 )
+# ASK-1 修复：黑名单是黑名单，物理封禁才是城墙——连接层禁用外部访问后，
+# 表函数读文件/装扩展在 DuckDB 引擎层直接失败（评审 2.0 P0 纵深加固）
+_CONNECT_CONFIG = {"enable_external_access": False}
 _MAX_ROWS = 1000
 
 
@@ -98,7 +102,7 @@ class Sandbox:
 
     async def execute(self, sql: str) -> QueryResult:
         safe_sql = guard(sql)
-        con = duckdb.connect(self.db_path, read_only=True)
+        con = duckdb.connect(self.db_path, read_only=True, config=_CONNECT_CONFIG)
         try:
             return await asyncio.wait_for(
                 asyncio.to_thread(self._run, con, safe_sql), timeout=self.timeout
@@ -118,7 +122,7 @@ class Sandbox:
 # 同步版本（脚本/测试用）
 def execute_sync(sql: str, db_path: Path | str | None = None) -> QueryResult:
     safe = guard(sql)
-    con = duckdb.connect(str(db_path or get_settings().db_abs_path), read_only=True)
+    con = duckdb.connect(str(db_path or get_settings().db_abs_path), read_only=True, config=_CONNECT_CONFIG)
     t0 = time.perf_counter()
     try:
         cur = con.execute(safe)

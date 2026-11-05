@@ -72,3 +72,24 @@ async def test_timeout_does_not_poison_pool(db_path):
         )
     res = await sb.execute("SELECT COUNT(*) FROM orders")
     assert res.rows[0][0] > 0
+
+
+# ---- ASK-1 红队回归（评审 2.0 P0）：表函数读文件/装扩展 ----
+
+def test_guard_rejects_file_read_table_functions():
+    """read_text/read_csv/glob 等表函数读文件必须被黑名单拦截。"""
+    for sql in [
+        "SELECT * FROM read_text('../.env')",
+        "SELECT * FROM read_csv('/etc/passwd')",
+        "SELECT * FROM glob('**/*.py')",
+        "INSTALL httpfs",
+        "LOAD httpfs",
+    ]:
+        with pytest.raises(SqlRejected):
+            guard(sql)
+
+
+def test_engine_blocks_external_access(db_path):
+    """物理封禁纵深：即便未来黑名单漏词，enable_external_access=False 让引擎层直接失败。"""
+    with pytest.raises(Exception):  # duckdb.IO Error / Invalid Input Error 家族
+        execute_sync("SELECT * FROM read_text('../no_such_file.txt')", db_path=db_path)

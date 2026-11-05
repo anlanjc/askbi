@@ -58,3 +58,36 @@ def test_group_by_and_order():
     assert "GROUP BY p.category" in sql
     assert "ORDER BY value DESC" in sql
     assert "毛利" not in caliber  # revenue 口径
+
+
+# ---- ASK-1 红队回归（评审 2.0 P0）：TimeRange 曾直拼 SQL，可注释行级权限/读任意文件 ----
+
+def test_time_start_injection_rejected():
+    """start 夹带 SQL 注入串必须被 YYYY-MM 白名单拒绝（曾可 ' OR 1=1 -- 注释权限行）。"""
+    with pytest.raises(ValidationError):
+        _dsl(time=TimeRange(mode="between", start="x' OR 1=1 --"))
+
+
+def test_time_start_file_read_rejected():
+    """start 夹带 UNION 读文件载荷必须被拒绝（曾可借表函数读 .env）。"""
+    with pytest.raises(ValidationError):
+        _dsl(time=TimeRange(mode="between", start="2000-01' UNION ALL SELECT 1 --"))
+
+
+def test_time_path_traversal_rejected():
+    with pytest.raises(ValidationError):
+        _dsl(time=TimeRange(mode="between", start="../.env"))
+
+
+def test_time_non_positive_n_rejected():
+    with pytest.raises(ValidationError):
+        _dsl(time=TimeRange(mode="last_n_months", n=0))
+    with pytest.raises(ValidationError):
+        _dsl(time=TimeRange(mode="last_n_months", n=-3))
+
+
+def test_time_valid_between_compiles_quoted():
+    """合法值放行，且经 _q 统一加引号（纵深防御，不裸插）。"""
+    sql, _ = compile_sql(_dsl(time=TimeRange(mode="between", start="2026-01", end="2026-03")))
+    assert ">= '2026-01'" in sql
+    assert "<= '2026-03'" in sql

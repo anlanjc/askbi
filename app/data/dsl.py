@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
@@ -56,6 +57,24 @@ class TimeRange(BaseModel):
     start: str | None = None  # YYYY-MM
     end: str | None = None
 
+    @field_validator("start", "end")
+    @classmethod
+    def _check_month(cls, v: str | None) -> str | None:
+        # ASK-1 修复：start/end 曾未校验直拼 SQL，可注释行级权限或借表函数读文件——
+        # 现强制 YYYY-MM 白名单格式（评审 2.0 P0）
+        if v is None:
+            return v
+        if not re.fullmatch(r"\d{4}-\d{2}", v):
+            raise ValueError(f"时间格式必须为 YYYY-MM，收到: {v!r}")
+        return v
+
+    @field_validator("n")
+    @classmethod
+    def _check_n(cls, v: int | None) -> int | None:
+        if v is not None and v < 1:
+            raise ValueError(f"n 必须为正整数，收到: {v}")
+        return v
+
     def to_sql(self, time_field: str = "o.order_date", end_month: str | None = None) -> str:
         f = f"strftime('%Y-%m', {time_field})"
         em = end_month or _END_MONTH
@@ -67,9 +86,9 @@ class TimeRange(BaseModel):
         if self.mode == "between":
             parts = []
             if self.start:
-                parts.append(f"{f} >= '{self.start}'")
+                parts.append(f"{f} >= {_q(self.start)}")  # 纵深：校验之上再走统一转义
             if self.end:
-                parts.append(f"{f} <= '{self.end}'")
+                parts.append(f"{f} <= {_q(self.end)}")
             return " AND ".join(parts) or "TRUE"
         return "TRUE"
 

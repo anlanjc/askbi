@@ -5,6 +5,14 @@
 
 ## 方案 A：Render（推荐，免费档够用）
 
+> 2026-11-06 实测记录：Blueprint（render.yaml）已备好（本仓库根目录），但 Render 新账号强制绑卡验证（Stripe $1 临时预授权）才允许创建服务——免费档也不例外。有卡的话这是最省事路线：New → Blueprint → 选本仓库 → Apply。
+
+## 方案 A'：本地 + 免费隧道（零绑卡，2026-11-06 定案）
+
+> 背景实测：HF Spaces 2026 起免费档仅 Static（Docker/Gradio 需 PRO $9/月）；localhost.run 匿名隧道已要 SSH key；pinggy/cloudflared 当晚出站不稳。故定案：**演示当天跑一键脚本出临时公网链接**（链接随机、会话结束即断，简历写"在线演示（演示时段可现场拉起）"口径，或附演示 GIF/截图兜底）。
+>
+> 一键脚本：`bash D:/1/1/1Tasks/tooling/demo_tunnel.sh`——自动起本地服务（PROFILE=full mock 零成本）+ 三级降级隧道（cloudflared → pinggy → localhost.run）+ 公网 health 验证，全日志落 tooling/demo_tunnel.log。
+
 1. 把仓库推到 GitHub（见下方"前置"）。
 2. Render 控制台 → New → Web Service → 连接仓库。
 3. 配置：

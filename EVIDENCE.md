@@ -14,7 +14,7 @@
 ## 2. 四个关键决策
 
 1. **为什么不直接 NL2SQL**：LLM 只产出白名单约束的 DSL（枚举校验），物理 SQL 由编译器渲染——注入/幻觉表名在编译期不可达；DSL 可 diff 可单测，行级权限/LIMIT 策略编译期统一注入。
-2. **为什么 QA 闭环值得做**：反向消融实证——关掉质检 100%→93.9%（关叙述)/90.9%(关质检)，6.1pp 是每个模块必要性的数字证据。
+2. **为什么 QA 闭环值得做**：反向消融实证（no_qa 单跑 real 口径，v2 116 条）——准确率 100%→93.9%、叙述数值一致率 100%→90.9%（ASK-12 勘误：原把同一跑的两个指标错标成「关叙述/关质检」两次消融，消融 runner 实无「关叙述」臂）。
 3. **为什么缓存默认关 + PROFILE 档位**：实验功能保守上线（零行为变化可回滚），PROFILE=full 一键演示——压测同时证明缓存修复后 +12% 吞吐，档位与证据互相背书。
 4. **为什么语义层做成可注册数据源（AB-3，11-05 扩展到第三源）**：语义层（维度/指标/取值白名单/NL 词表）从模块级常量升级为 DatasetSpec 注册表——数据集 B（线下连锁咖啡，tickets/ticket_lines）与数据集 C（B2B SaaS 订阅，invoices/invoice_lines，11-05）物理表结构完全不同，**上层零改动**（图/节点/QA/评测/MCP 无一行 if dataset）；DEFAULT_SPEC 引用原常量对象 + 全部新参数带默认值，95 项存量测试零改动全绿、v1/v2 mock 100% 重跑作回归裁判。三源三套物理模型证明编译器只依赖 spec 声明。"支持多数据源接入"从口号变成可复现实证。ADR：docs/registry_adr.md。
 
@@ -51,7 +51,7 @@ pip install -r requirements.txt
 python scripts/gen_data.py                 # 种子 42，确定性重建 DuckDB
 
 # 测试与评测
-python -m pytest -q                        # 94 项
+python -m pytest -q                        # 137 项（ASK-12 勘误：原 94 过时）
 LLM_PROVIDER=mock python scripts/run_eval.py                          # v1 smoke 33
 LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_v2.json   # v2 116
 LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_v2.json --split holdout
@@ -85,7 +85,7 @@ LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset
 
 ## 6. 已知边界与下一步
 
-- 评测是 mock 可判定集（措辞对齐解析器词表），真实模型泛化上限由 real 报告的失败明细界定；holdout 15 条不参与调参。
+- 评测是 mock 可判定集（措辞对齐解析器词表），真实模型泛化上限由 real 报告的失败明细界定；holdout 13 条不参与调参。
 - 多轮 followup 的渠道词表已收敛到 DIMENSION_VALUES 单一来源；"换成 X 渠道"重复后缀 bug 已修复（AB-2 评审发现）。
 - clarify_suspend 需 API 层 thread_id/resume（图内 run_ask 不挂起）——多轮评测脚本按此适配（ADR 见 docs/multiturn_adr.md）。
 - 第二/第三数据源适配器已落地（registry_adr.md）：B/C 数据集共享全局 ROLE_SCOPES（同一大区划分）；RAG 样例库未按数据集隔离（真实 provider 下 B/C 问题会检索到电商 few-shot，mock 不受影响）；多轮指代消解词表仍取默认数据集（followup 默认关闭，边界如实声明）。

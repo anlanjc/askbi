@@ -15,6 +15,9 @@ from pathlib import Path
 
 from ..config import get_settings
 
+# ASK-9：内存索引上限——淘汰仅影响常驻查询窗口，JSONL 全量留盘可回放
+_MAX_IN_MEMORY = 200
+
 
 class TaskStore:
     def __init__(self, path: Path | None = None):
@@ -54,8 +57,20 @@ class TaskStore:
             # 复合变更窗口竞态——finish 下标直接 KeyError 冲出 SSE 生成器，客户端
             # 只收 start 无终帧无限等待。
             self._tasks[t["id"]] = t
+            self._evict_if_over()
         self._append(t)
         return t
+
+    def _evict_if_over(self) -> None:
+        """ASK-9 修复（评审 2.0）：内存索引曾只增不减——每任务带全量 events+答案表，
+        长跑 RSS 随请求数线性上涨。上限淘汰仅影响常驻查询窗口，JSONL 全量留盘可回放。"""
+        limit = _MAX_IN_MEMORY
+        if len(self._tasks) <= limit:
+            return
+        finished = [t for t in self._tasks.values() if t.get("status") != "running"]
+        finished.sort(key=lambda t: t.get("created_at", ""))
+        for t in finished[: len(self._tasks) - limit]:
+            self._tasks.pop(t["id"], None)
 
     def finish(self, task_id: str, answer: dict, usage: dict, events: list, elapsed_ms: float) -> None:
         with self._lock:

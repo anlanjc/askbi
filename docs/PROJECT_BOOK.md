@@ -63,7 +63,7 @@
 | 关卡 | 重写什么 | 判卷标准 |
 |---|---|---|
 | K1 | compile_sql 权限注入链（角色作用域→WHERE 注入→LIMIT 钳制） | tests/test_compiler.py + test_row_level_permission |
-| K2 | canonical_dsl 四层归一 + QueryCache 双闸时序（TTL 锁内→版本锁外→二次拿锁重查） | tests/test_cache.py 17 项 |
+| K2 | canonical_dsl 四层归一 + QueryCache 三闸时序（TTL 锁内→版本锁外→二次拿锁重查→semver） | tests/test_cache.py 18 项 |
 | K3 | is_followup 三重门槛 + 两层实体归一 | tests/test_followup.py |
 | K4 | interrupt 挂起双态图（落盘→Command(resume)→节点重执行） | tests/test_clarify_suspend.py |
 | K5 | 管理面同窗口审计（变更→审计→失败回滚） | tests/test_audit.py |

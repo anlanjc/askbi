@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -296,7 +297,10 @@ async def executor_node(state: GraphState) -> dict:
     cache_key = None
     if cache.enabled and state.get("dsl") and state.get("sql"):
         cache_key = fingerprint(state["dsl"], state.get("role", "boss"), spec.name)
-        cached = cache.get(cache_key)
+        # ASK-4 修复（评审 2.0）：缓存 get/set 曾在事件循环线程同步跑 DuckDB——
+        # data_version 探测为四聚合全表扫描，每 30s 窗口到期后冻结全部在途请求。
+        # 挪 to_thread（与同库 IO 的 Sandbox 惯例对齐）。
+        cached = await asyncio.to_thread(cache.get, cache_key)
         if cached is not None:
             result = {**align_columns(cached, state["dsl"].get("dimensions") or []), "from_cache": True}
             return {
@@ -337,7 +341,7 @@ async def executor_node(state: GraphState) -> dict:
     ):
         result.update(rows=[], row_count=0, note="空结果（可能为权限范围外或无符合条件的数据）")
     if cache_key is not None:
-        cache.set(cache_key, result)  # 空结果同样缓存：权限范围外的问题重复问不必反复执行
+        await asyncio.to_thread(cache.set, cache_key, result)  # 空结果同样缓存：权限范围外的问题重复问不必反复执行
     return {
         "result": result,
         "sql_error": None,

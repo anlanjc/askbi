@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import time
+from collections import OrderedDict
 from pathlib import Path
 from urllib.parse import quote
 
@@ -12,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from ..agents.graph import get_graph
@@ -52,14 +54,53 @@ def _sse(payload: dict) -> str:
 _SUSPEND_GRAPH = None
 
 
+class _LRUSaver(InMemorySaver):
+    """ASK-8 修复（评审 2.0）：进程级 InMemorySaver 只增不减——每检查点含全量结果行，
+    长跑内存随请求线性爬升至 OOM。LRU 子类：超容量淘汰最旧 thread 并删除其检查点
+    （容量对齐 context.MAX_SESSIONS 量级）。继承而非鸭子包装——langgraph 1.2.17 在
+    types.py:122 对 checkpointer 做实例类型强校验。"""
+
+    def __init__(self, max_threads: int = 256):
+        super().__init__()
+        self._max = max_threads
+        self._order: OrderedDict[str, None] = OrderedDict()
+
+    def _touch(self, thread_id: str) -> None:
+        if thread_id in self._order:
+            self._order.move_to_end(thread_id)
+        else:
+            self._order[thread_id] = None
+            while len(self._order) > self._max:
+                oldest, _ = self._order.popitem(last=False)
+                self.delete_thread(oldest)  # 继承实现：清 storage/writes 并释放内存
+
+    def put(self, config, checkpoint, metadata, new_versions):
+        self._touch(config["configurable"]["thread_id"])
+        return super().put(config, checkpoint, metadata, new_versions)
+
+    async def aput(self, config, checkpoint, metadata, new_versions):
+        self._touch(config["configurable"]["thread_id"])
+        return await super().aput(config, checkpoint, metadata, new_versions)
+
+    def get_tuple(self, config):
+        tid = config["configurable"]["thread_id"]
+        if tid in self._order:
+            self._order.move_to_end(tid)
+        return super().get_tuple(config)
+
+    async def aget_tuple(self, config):
+        tid = config["configurable"]["thread_id"]
+        if tid in self._order:
+            self._order.move_to_end(tid)
+        return await super().aget_tuple(config)
+
+
 def _get_suspend_graph():
     """挂起拓扑专用图（带 checkpointer；与默认单例隔离，flag 关时不构建）。"""
     global _SUSPEND_GRAPH
     if _SUSPEND_GRAPH is None:
-        from langgraph.checkpoint.memory import InMemorySaver
-
         from ..agents.graph import build_graph
-        _SUSPEND_GRAPH = build_graph(clarify_suspend=True, checkpointer=InMemorySaver())
+        _SUSPEND_GRAPH = build_graph(clarify_suspend=True, checkpointer=_LRUSaver(max_threads=256))
     return _SUSPEND_GRAPH
 
 
@@ -82,6 +123,17 @@ async def ask(body: AskRequest):
 
     # E4②：澄清挂起拓扑（CLARIFY_SUSPEND_ENABLED=1 时启用挂起图 + thread 配置）
     suspend_on = get_settings().clarify_suspend_enabled
+    # ASK-7 修复（评审 2.0）：resume 前置条件曾零校验——开关关时 resume=true 被静默
+    # 丢弃，澄清答案被当全新问题跑图出数；thread 缺失同样静默错跑。请求期显式拒绝。
+    if body.resume:
+        if not suspend_on:
+            raise HTTPException(status_code=422, detail="澄清挂起未启用，resume 请求无效")
+        if not body.thread_id:
+            raise HTTPException(status_code=422, detail="resume 请求必须携带 thread_id")
+        graph = _get_suspend_graph()
+        snap = await graph.aget_state({"configurable": {"thread_id": body.thread_id}})
+        if not snap.next:
+            raise HTTPException(status_code=409, detail="该 thread 无挂起的澄清可恢复")
     graph = _get_suspend_graph() if suspend_on else get_graph()
     astream_config = ({"configurable": {"thread_id": body.thread_id or task["id"]}}
                       if suspend_on else None)

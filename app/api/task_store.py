@@ -49,29 +49,38 @@ class TaskStore:
             "usage": {},
             "events": [],
         }
-        self._tasks[t["id"]] = t
+        with self._lock:
+            # ASK-3 修复（评审 2.0）：create/finish/set_feedback 曾不取锁，与 clear 的
+            # 复合变更窗口竞态——finish 下标直接 KeyError 冲出 SSE 生成器，客户端
+            # 只收 start 无终帧无限等待。
+            self._tasks[t["id"]] = t
         self._append(t)
         return t
 
     def finish(self, task_id: str, answer: dict, usage: dict, events: list, elapsed_ms: float) -> None:
-        t = self._tasks[task_id]
-        t.update(
-            status="done",
-            kind=(answer or {}).get("kind"),
-            answer=answer,
-            usage=usage,
-            events=events,
-            elapsed_ms=round(elapsed_ms, 1),
-        )
+        with self._lock:
+            t = self._tasks.get(task_id)
+            if t is None:
+                # ASK-3 修复：任务已被管理面归档 → 幂等视为完成，不抛 KeyError
+                return
+            t.update(
+                status="done",
+                kind=(answer or {}).get("kind"),
+                answer=answer,
+                usage=usage,
+                events=events,
+                elapsed_ms=round(elapsed_ms, 1),
+            )
         self._append(t)
 
     def set_feedback(self, task_id: str, value: str, comment: str = "") -> dict | None:
         """thumbs 反馈：附着到任务并随任务一起追加落盘（重启可回放）。"""
-        t = self._tasks.get(task_id)
-        if t is None:
-            return None
-        t["feedback"] = {"value": value, "comment": comment,
-                         "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        with self._lock:
+            t = self._tasks.get(task_id)
+            if t is None:
+                return None
+            t["feedback"] = {"value": value, "comment": comment,
+                             "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
         self._append(t)
         return t
 

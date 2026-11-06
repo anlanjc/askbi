@@ -73,6 +73,16 @@ _WHY_WORDS = ("为什么", "原因", "为何", "下滑", "增长", "怎么回事
 
 def route_node(state: GraphState) -> dict:
     q = state["question"]
+    # ASK-10 修复（评审 2.0）：payload.depth 曾从未接线——显式传值优先于关键词推断（评测用）
+    explicit = state.get("depth")
+    if explicit in ("light", "full"):
+        return {
+            "depth": explicit,
+            "route_reason": f"请求显式指定 depth={explicit}（跳过自动路由）",
+            "status": "routed",
+            "events": _merge_events(state, _event(state, "router", "route",
+                                                  {"depth": explicit, "reason": "explicit"})),
+        }
     heavy = bool(re.search(r"(为什么|原因|为何|趋势|走势|对比|vs|各|每个|按)", q)) or any(
         w in q for w in _WHY_WORDS
     )

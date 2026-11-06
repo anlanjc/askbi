@@ -96,7 +96,10 @@ async def ask(body: AskRequest):
             if suspend_on and body.resume:
                 payload = Command(resume=question)   # 恢复挂起的澄清（question=用户回答）
             else:
-                payload = {"question": question, "role": body.role, "events": [], "usage": {}}
+                # ASK-10 修复（评审 2.0）：payload 曾不含 depth——schemas 声明的显式
+                # 覆盖从未接线，评测用 depth=full 实际无效果。
+                payload = {"question": question, "role": body.role, "depth": body.depth,
+                           "events": [], "usage": {}}
             async for update in graph.astream(payload, config=astream_config,
                                               stream_mode="updates"):
                 if "__interrupt__" in update:        # 澄清挂起：通知客户端带 thread_id 回答
@@ -118,7 +121,13 @@ async def ask(body: AskRequest):
                         yield _sse({"type": "node_done", "node": node, "status": delta["status"]})
                     events = delta.get("events") or []
                     for ev in events[sent_events:]:
-                        yield _sse({"type": "event", **ev})
+                        # ASK-2 修复（评审 2.0）：曾 `{"type":"event", **ev}`——内层事件恒含
+                        # "type"，dict 展开后内层胜出，三类帧契约失效、前端执行日志恒空。
+                        # 内层事件类型改走 event_type 子字段，顶层 type 契约保住。
+                        yield _sse({"type": "event", "ts": ev.get("ts"),
+                                    "node": ev.get("node"),
+                                    "event_type": ev.get("type"),
+                                    "data": ev.get("data")})
                     sent_events = max(sent_events, len(events))
                     final_state.update(delta)
         except Exception as e:  # noqa: BLE001

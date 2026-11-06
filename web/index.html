@@ -150,7 +150,8 @@ function logEvent(ev) {
   const line = document.createElement("div");
   line.className = "l";
   const data = ev.data ? JSON.stringify(ev.data) : "";
-  line.textContent = `[${ev.node}] ${ev.type} ${data.length > 160 ? data.slice(0, 160) + "…" : data}`;
+  // ASK-2 配套：顶层 type 契约保住后，事件子类型走 event_type
+  line.textContent = `[${ev.node}] ${ev.event_type || ev.type} ${data.length > 160 ? data.slice(0, 160) + "…" : data}`;
   el.prepend(line);
 }
 

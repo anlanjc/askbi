@@ -47,7 +47,7 @@ async def test_resume_completes_with_merged_question(suspended_graph):
     await _drain(suspended_graph,
                  {"question": "最近卖得怎么样", "role": "boss", "events": [], "usage": {}},
                  _cfg())
-    resumed, payload, last = await _drain(
+    resumed, _payload, last = await _drain(
         suspended_graph, Command(resume="我想看销售额和毛利率"), _cfg())
     assert resumed is False                        # 恢复后一口气跑完
     # 节点键控增量：answer 在 finalizer 的 delta 里（也可用 aget_state 读全量）
@@ -87,8 +87,8 @@ async def test_flag_off_keeps_legacy_clarify(db_path):
 async def test_api_clarify_pending_and_resume(db_path, monkeypatch):
     """API 端到端：挂起推 clarify_pending → 带 thread_id+resume 恢复出数。"""
     from fastapi.testclient import TestClient
+
     from app.api.main import app as api_app
-    from app.config import get_settings
 
     monkeypatch.setattr(get_settings(), "clarify_suspend_enabled", True)
     client = TestClient(api_app)

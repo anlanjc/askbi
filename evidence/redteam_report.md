@@ -22,8 +22,8 @@
 
 - **发现过程**：探查脚本向 `guard()` 投递 `SELECT * FROM parquet_scan('C:/x/evil.parquet')` —— **穿过守卫**（黑名单只列 read_csv/read_text/read_blob/read_json/glob 等，未列 `*_scan` 表函数家族），最终由 DuckDB 引擎层兜住（`Permission Error: file system operations are disabled by configuration`）。同族 `iceberg_scan / delta_scan / postgres_scan / mysql_scan / sqlite_scan` 同样全部穿guard。
 - **危害评估**：实际数据未泄露（物理墙 `enable_external_access=False` 拦住），但黑名单层对文件读取面**形同虚设**——防御从设计宣称的双层退化为单层。若未来有人调整连接配置（如为别的功能放开 external access）或迁移执行引擎，这层纸立即暴露。
-- **修复**：`app/data/sandbox.py` `_FORBIDDEN` 补齐 `parquet_scan|iceberg_scan|delta_scan|postgres_scan|mysql_scan|sqlite_scan`（黑名单永远不完备，物理墙仍是最终防线——本次是把已知文件读取家族补齐，恢复双层纵深）。
-- **回归**：`test_fixed_file_scan_family_now_rejected_by_guard`（6 参数）——修复前 guard 放行，修复后 `SqlRejected`。
+- **修复**：`app/data/sandbox.py` `_FORBIDDEN` 补齐 `parquet_scan|iceberg_scan|delta_scan|postgres_scan|mysql_scan|sqlite_scan`（黑名单永远不完备，物理墙仍是最终防线——本次是把已知文件读取家族补齐，恢复双层纵深）。T3 收尾时同族漏词 `read_parquet`（read_csv 的直系兄弟）一并补入。
+- **回归**：`test_fixed_file_scan_family_now_rejected_by_guard`（7 参数）——修复前 guard 放行，修复后 `SqlRejected`。
 - **连带确认**：`load_extension('evil')` 同样穿 guard（`\bload\b` 的词边界不匹配 `load_extension` 的下划线）——但引擎层该函数在发行版中不存在 + 扩展机制禁用，双保险兜住。**有意不修**黑名单（`\w+_load` 通配会误伤合法列名），以 `test_guard_passes_load_extension_but_engine_refuses` 钉死该纵深事实。
 
 ### 缺陷② 前端 renderAnswer 分支漏 esc()，LLM 可控文本构成二阶注入链——已修复

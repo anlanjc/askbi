@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -24,7 +24,7 @@ from .schema import MASKED_FIELDS
 _FORBIDDEN = re.compile(
     r"\b(insert|update|delete|drop|alter|create|attach|detach|copy|export|import|"
     r"pragma|call|set|prepare|execute|vacuum|checkpoint|"
-    r"read_csv|read_csv_auto|read_text|read_blob|read_json|glob|install|load|"
+    r"read_csv|read_csv_auto|read_text|read_blob|read_json|read_parquet|glob|install|load|"
     r"parquet_scan|iceberg_scan|delta_scan|postgres_scan|mysql_scan|sqlite_scan)\b",
     re.IGNORECASE,
 )
@@ -119,7 +119,7 @@ class Sandbox:
         finally:
             try:
                 con.close()
-            except Exception:  # noqa: BLE001  # 极端竞态下 close 可能撞上未完全中止的查询
+            except Exception:  # noqa: BLE001, S110  极端竞态下 close 可能撞上未完全中止的查询
                 pass
 
 

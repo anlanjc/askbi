@@ -41,7 +41,7 @@ def test_readonly_is_physical(db_path):
 
     con = duckdb.connect(str(db_path), read_only=True)
     try:
-        with pytest.raises(Exception):
+        with pytest.raises(duckdb.Error):
             con.execute("CREATE TABLE hack(x INT)")
     finally:
         con.close()
@@ -90,6 +90,19 @@ def test_guard_rejects_file_read_table_functions():
 
 
 def test_engine_blocks_external_access(db_path):
-    """物理封禁纵深：即便未来黑名单漏词，enable_external_access=False 让引擎层直接失败。"""
-    with pytest.raises(Exception):  # duckdb.IO Error / Invalid Input Error 家族
-        execute_sync("SELECT * FROM read_text('../no_such_file.txt')", db_path=db_path)
+    """物理封禁纵深：绕过 guard 直连引擎（模拟黑名单未来漏词的最坏情形），
+    enable_external_access=False 让文件读取在引擎层直接失败。
+
+    注：本测试旧版用 read_text 载荷走 execute_sync——read_text 本就在黑名单，
+    实际断言到的是 guard 层（SqlRejected ⊂ Exception 被宽断言吞掉），从未触达
+    引擎墙；B017 收窄时暴露，现改为直连引擎的真墙测试（AB-HR3）。
+    """
+    import duckdb
+
+    con = duckdb.connect(str(db_path), read_only=True,
+                         config={"enable_external_access": False})
+    try:
+        with pytest.raises(duckdb.Error):  # IO Error / Permission Error 家族
+            con.execute("SELECT * FROM read_parquet('../no_such_file.txt')")
+    finally:
+        con.close()

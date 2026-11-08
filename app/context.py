@@ -59,7 +59,7 @@ class SessionContext:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._last_question: "OrderedDict[str, str]" = OrderedDict()
+        self._last_question: OrderedDict[str, str] = OrderedDict()
 
     def set(self, session_id: str, question: str) -> None:
         with self._lock:

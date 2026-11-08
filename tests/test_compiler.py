@@ -7,8 +7,8 @@ from app.data.dsl import Filter, QueryDSL, TimeRange, compile_sql
 
 
 def _dsl(**kw) -> QueryDSL:
-    base = dict(intent="aggregate", metric="revenue", dimensions=[], filters=[],
-                time=TimeRange(mode="all"))
+    base = {"intent": "aggregate", "metric": "revenue", "dimensions": [], "filters": [],
+                "time": TimeRange(mode="all")}
     base.update(kw)
     return QueryDSL(**base)
 

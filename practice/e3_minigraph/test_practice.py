@@ -3,7 +3,6 @@
 验收标准：pytest test_practice.py 全绿（6 passed）。
 """
 
-import pytest
 
 from skeleton import run_ask
 

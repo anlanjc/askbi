@@ -28,7 +28,7 @@ def test_pass_when_numbers_from_result():
 def test_fail_on_invented_number():
     result, facts = _ctx()
     narrative = "美妆销售额高达 999999 元。"
-    issues, checked = check_numbers(narrative, result, facts)
+    issues, _checked = check_numbers(narrative, result, facts)
     assert issues and "999999" in issues[0]
 
 

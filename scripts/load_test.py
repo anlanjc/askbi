@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import statistics
 import sys
 import time
 from pathlib import Path
@@ -24,12 +23,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.agents import nodes  # noqa: E402
-from app.agents.graph import run_ask  # noqa: E402
-from app.config import get_settings  # noqa: E402
-from app.cache import get_query_cache  # noqa: E402
-from app.llm.base import ChatRequest, LLMResponse  # noqa: E402
-from app.llm.mock import MockLLM  # noqa: E402
+from app.agents import nodes
+from app.agents.graph import run_ask
+from app.cache import get_query_cache
+from app.config import get_settings
+from app.llm.base import ChatRequest, LLMResponse
+from app.llm.mock import MockLLM
 
 LIGHT_Q = "上月销售额是多少"
 HEAVY_Q = "为什么上月美妆品类毛利率下滑了"
@@ -167,13 +166,13 @@ async def main() -> int:
         + (f"{best['p50']}ms（并发 {best['conc']}）" if best else "N/A") +
         "，放大倍数 ≈ 单请求 LLM 调用次数（light 2 次 / full 4 次）。QPS 随并发近线性提升"
         "（8.8→21.9→43.2）证明编排层可横向吃并发，天花板在 LLM 供应商侧吞吐。",
-        "- **压测揪出的真 bug（已修复）**：首版压测中开启缓存反而全矩阵负收益"
+        ("- **压测揪出的真 bug（已修复）**：首版压测中开启缓存反而全矩阵负收益"
         "（0 延迟 @50 并发：缓存 69.3 QPS vs 无缓存 110.8）。定位：data_version 每次 get 新开 DuckDB 连接跑"
         " 4 个聚合扫描（10 万+19 万行表 COUNT），版本探测本身比被缓存的查询还贵。修复：版本号 30s 记忆化窗口"
-        "（失效延迟上界 = 窗口+TTL，错误方向仍是误失效）。修复后同点位 124.0 vs 110.8 QPS（**+12%**），P50 300 vs 341ms。",
-        "- 横向扩容路径（按收益排序）：①减少调用次数（已有：预算路由 4→2）→ ②查询缓存（修复后 +12%，重复查询占比越高收益越大）→ "
+        "（失效延迟上界 = 窗口+TTL，错误方向仍是误失效）。修复后同点位 124.0 vs 110.8 QPS（**+12%**），P50 300 vs 341ms。"),
+        ("- 横向扩容路径（按收益排序）：①减少调用次数（已有：预算路由 4→2）→ ②查询缓存（修复后 +12%，重复查询占比越高收益越大）→ "
         "③LLM 供应商侧并发与批处理 → ④只有当单机编排本身成为瓶颈（形态一 QPS 见顶）才需要拆服务/消息队列——"
-        "在形态一 110+ QPS 的编排上限上，**单机架构远未到需要 Redis/K8s 的规模**。",
+        "在形态一 110+ QPS 的编排上限上，**单机架构远未到需要 Redis/K8s 的规模**。"),
         "- 错误率：全程 0（mock 确定性）；真实模型下的错误率见评测报告的失败明细。",
     ]
 

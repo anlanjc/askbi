@@ -43,7 +43,7 @@ class OpenAICompatibleClient(LLMClient):
                 last_err = e
                 if attempt < _RETRY_ATTEMPTS - 1:
                     await asyncio.sleep(_RETRY_BASE_SECONDS * (2 ** attempt))
-            except Exception as e:  # noqa: BLE001  鉴权失败/参数错误等，重试无意义
+            except Exception as e:
                 raise LLMError(f"LLM 调用失败（不重试）: {e}") from e
         else:
             raise LLMError(f"LLM 调用重试 {_RETRY_ATTEMPTS} 次仍失败: {last_err}") from last_err

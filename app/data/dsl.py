@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from .metrics import METRICS
 from .registry import DEFAULT_SPEC, DatasetSpec
-from .schema import DIMENSIONS, DIMENSION_VALUES, FILTER_FIELDS
+from .schema import DIMENSIONS, FILTER_FIELDS
 
 Ops = Literal["=", "!=", "in", "not in", ">", "<", ">=", "<="]
 
@@ -45,7 +45,7 @@ class Filter(BaseModel):
     @field_validator("field")
     @classmethod
     def _check_field(cls, v: str, info: ValidationInfo) -> str:
-        metrics, dimensions, filter_fields = _whitelists(info)
+        _metrics, _dimensions, filter_fields = _whitelists(info)
         if v not in filter_fields:
             raise ValueError(f"未知过滤字段: {v}，可用: {list(filter_fields)}")
         return v

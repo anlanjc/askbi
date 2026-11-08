@@ -42,14 +42,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
-from langgraph.types import Command  # noqa: E402
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
-from app.agents.graph import build_graph, run_ask  # noqa: E402
-from app.cache import get_query_cache  # noqa: E402
-from app.config import get_settings  # noqa: E402
-from app.context import get_session_context, resolve_followup  # noqa: E402
-from app.eval.runner import judge_query  # noqa: E402  # 复用 v1 判分器（只导入不修改）
+from app.agents.graph import build_graph, run_ask
+from app.cache import get_query_cache
+from app.config import get_settings
+from app.context import get_session_context, resolve_followup
+from app.eval.runner import judge_query  # 复用 v1 判分器（只导入不修改）
 
 DATASET = ROOT / "eval" / "dataset_v2_followup.json"
 DEFAULT_REPORT = ROOT.parent / "evidence" / "multiturn_report.md"
@@ -168,7 +168,7 @@ async def run(only: str | None) -> dict:
             })
             flag = "✓" if ok else "✗"
             q_show = r["resolved"] if r["resolved"] != r["raw"] else r["raw"]
-            extra = f" [缓存命中]" if from_cache else ""
+            extra = " [缓存命中]" if from_cache else ""
             print(f"  {flag} {item['id']}.t{tno} [{item['scenario']}] {q_show}{extra} "
                   f"{detail}" + ("" if ok else f"  note={r['note']!r}"))
 
@@ -208,11 +208,11 @@ def write_report(s: dict, path: Path) -> None:
         + ("（零 API 花费）" if s["provider"] == "mock" else "")
         + f" · PROFILE={s['profile']}"
         "（cache/followup 开）· 挂起条目走独立 checkpointer 图",
-        f"- 结果：条目全对 **{s['items_all_correct']}/{s['items']}** · "
+        (f"- 结果：条目全对 **{s['items_all_correct']}/{s['items']}** · "
         f"轮次正确 **{round(s['turn_accuracy'] * len(s['results']))}/{s['turns']}**"
-        f"（{s['turn_accuracy']:.1%}）· 缓存命中轮 {s['cache_hit_turns']}",
-        f"- 延迟 avg {s['latency_ms_avg']}ms · token ≈{s['tokens_total']} · "
-        f"缓存计数 {json.dumps({k: v for k, v in s['cache_stats'].items() if k in ('hits', 'misses', 'stores')}, ensure_ascii=False)}",
+        f"（{s['turn_accuracy']:.1%}）· 缓存命中轮 {s['cache_hit_turns']}"),
+        (f"- 延迟 avg {s['latency_ms_avg']}ms · token ≈{s['tokens_total']} · "
+        f"缓存计数 {json.dumps({k: v for k, v in s['cache_stats'].items() if k in ('hits', 'misses', 'stores')}, ensure_ascii=False)}"),
         "",
         "| 场景 | 轮次通过 |",
         "|---|---|",

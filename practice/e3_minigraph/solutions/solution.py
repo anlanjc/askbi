@@ -9,7 +9,6 @@ from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from app.config import get_settings
 from app.data.dsl import QueryDSL, compile_sql
 from app.llm.base import ChatRequest
 from app.llm.factory import get_llm
@@ -80,7 +79,7 @@ def route_node(state: GraphState) -> dict:
 async def clarifier_node(state: GraphState) -> dict:
     try:
         verdict = _loose_json(await _call_llm("clarifier", {"question": state["question"]}))
-    except Exception:
+    except Exception:  # noqa: BLE001  LLM 输出形态不可枚举，解析失败按设计降级为放行
         verdict = {"verdict": "clear", "reason": "解析失败默认放行"}
     v = verdict.get("verdict", "clear")
     update: dict = {}
@@ -111,7 +110,7 @@ async def sql_agent_node(state: GraphState) -> dict:
     content = await _call_llm("sql_agent", {"question": state["question"]})
     try:
         raw = _loose_json(content)
-    except Exception:
+    except Exception:  # noqa: BLE001  LLM 输出形态不可枚举，解析失败转结构化报错走拒答
         raw = {"error": "DSL 输出无法解析"}
 
     if "error" in raw:

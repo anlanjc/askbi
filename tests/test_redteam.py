@@ -21,11 +21,19 @@ import json
 import pathlib
 import re
 
+import duckdb
 import httpx
 import pytest
 from pydantic import ValidationError
 
-from app.data.dsl import QueryDSL, TimeRange, build_dsl, compile_sql, validate_filter_values
+from app.data.dsl import (
+    CompileError,
+    QueryDSL,
+    TimeRange,
+    build_dsl,
+    compile_sql,
+    validate_filter_values,
+)
 from app.data.sandbox import SqlRejected, execute_sync, guard
 
 # ===========================================================================
@@ -80,8 +88,8 @@ async def _ask(client, question: str, role: str = "boss") -> dict:
 
 
 def _dsl(**kw) -> QueryDSL:
-    base = dict(intent="aggregate", metric="revenue", dimensions=[], filters=[],
-                time=TimeRange(mode="all"))
+    base = {"intent": "aggregate", "metric": "revenue", "dimensions": [], "filters": [],
+                "time": TimeRange(mode="all")}
     base.update(kw)
     return QueryDSL(**base)
 
@@ -222,7 +230,7 @@ async def test_sqli_time_blind_via_filter_value_is_inert(db_path):
 def test_guard_passes_load_extension_but_engine_refuses(db_path):
     """纵深证据：load_extension 不在黑名单（\b 不匹配下划线）但引擎层不存在该
     函数且外部访问已禁——黑名单缺口的兜底是物理墙（见 redteam_report 观察项②）。"""
-    with pytest.raises(Exception):
+    with pytest.raises(duckdb.Error):   # CatalogException：发行版无此函数
         execute_sync("SELECT load_extension('evil')", db_path)
 
 
@@ -233,7 +241,7 @@ def test_guard_passes_load_extension_but_engine_refuses(db_path):
 
 @pytest.mark.parametrize("role", ["root", "South", "south ", "", "admin", "BOSS"])
 def test_unknown_or_mutated_role_rejected(role):
-    with pytest.raises(Exception):
+    with pytest.raises(CompileError):
         compile_sql(_dsl(), role=role)
 
 
@@ -287,12 +295,12 @@ def test_limit_boundary_clamped(limit, expect):
 
 
 def test_filter_in_needs_nonempty_list():
-    with pytest.raises(Exception):
+    with pytest.raises(CompileError):
         compile_sql(_dsl(filters=[{"field": "region", "op": "in", "value": "华南"}]))
 
 
 def test_filter_eq_rejects_list():
-    with pytest.raises(Exception):
+    with pytest.raises(CompileError):
         compile_sql(_dsl(filters=[{"field": "region", "op": "=", "value": ["华南", "华北"]}]))
 
 
@@ -450,6 +458,7 @@ def test_deeplink_question_flows_through_esc():
 @pytest.mark.parametrize("fn", [
     "parquet_scan", "iceberg_scan", "delta_scan",
     "postgres_scan", "mysql_scan", "sqlite_scan",
+    "read_parquet",   # AB-HR3 补齐（read_csv 的直系兄弟，T3 收尾时发现同族漏词）
 ])
 def test_fixed_file_scan_family_now_rejected_by_guard(fn):
     """红队真缺陷①：文件读取表函数家族曾不在黑名单，只剩物理墙单层防御——

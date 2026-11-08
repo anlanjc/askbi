@@ -143,7 +143,6 @@ async def test_client_gives_up_after_retries(monkeypatch):
 
 
 async def test_client_no_retry_on_non_retryable(monkeypatch):
-    from app.llm import deepseek
 
     comp = _FlakyCompletions(fail_times=1)
     # 不改 _retryable_errors：RuntimeError 不在默认可重试清单 → 立刻失败

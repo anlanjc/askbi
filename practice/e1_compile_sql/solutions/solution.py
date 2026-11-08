@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from app.data.metrics import METRICS
-from app.data.schema import BASE_FROM, DIMENSIONS, DIMENSION_VALUES, FILTER_FIELDS
+from app.data.schema import BASE_FROM, DIMENSION_VALUES, DIMENSIONS, FILTER_FIELDS
 
 Ops = Literal["=", "!=", "in", "not in", ">", "<", ">=", "<="]
 

@@ -11,8 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import get_settings  # noqa: E402
-from app.data.generator import generate  # noqa: E402
+from app.config import get_settings
+from app.data.generator import generate
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

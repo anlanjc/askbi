@@ -84,7 +84,7 @@ class ChromaExampleStore(TfidfExampleStore):
 
     def __init__(self):
         super().__init__()
-        import chromadb  # noqa: PLC0415
+        import chromadb
 
         self._client = chromadb.Client()
         self._col = self._client.get_or_create_collection("askbi_examples")

@@ -27,10 +27,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
-
-from app.data.metrics import METRICS
-from app.data.schema import BASE_FROM, DIMENSIONS, DIMENSION_VALUES, FILTER_FIELDS
+from pydantic import BaseModel, Field
 
 Ops = Literal["=", "!=", "in", "not in", ">", "<", ">=", "<="]
 

@@ -23,9 +23,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.data.dsl import QueryDSL, compile_sql  # noqa: E402
-from app.data.sandbox import execute_sync  # noqa: E402
-from app.llm.mock import _parse_question  # noqa: E402
+from app.data.dsl import QueryDSL, compile_sql
+from app.data.sandbox import execute_sync
+from app.llm.mock import _parse_question
 
 
 def dsl(
@@ -54,7 +54,7 @@ L1 = {"mode": "last_n_months", "n": 1}
 L3 = {"mode": "last_n_months", "n": 3}
 L6 = {"mode": "last_n_months", "n": 6}
 L12 = {"mode": "last_n_months", "n": 12}
-BT = lambda s, e: {"mode": "between", "start": s, "end": e}  # noqa: E731
+BT = lambda s, e: {"mode": "between", "start": s, "end": e}
 
 # (id, kind, question, dsl | None, role, split)
 SPECS: list[tuple[str, str, str, dict | None, str, str]] = [

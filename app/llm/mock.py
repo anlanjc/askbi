@@ -20,7 +20,7 @@ from .base import ChatRequest, LLMClient, LLMResponse, TokenUsage
 def _payload(req: ChatRequest) -> dict:
     try:
         return json.loads(req.user)
-    except Exception:
+    except Exception:  # noqa: BLE001  payload 非 JSON 时按设计退化为问题文本
         return {"question": req.user}
 
 
@@ -59,10 +59,6 @@ def _clarifier(p: dict) -> dict:
     spec = _spec_of(p)
     q = p.get("question", "")
     has_metric = any(a in q for m_aliases in _metric_aliases(spec) for a in m_aliases)
-    dim_vals = _parser_dim_values(spec)
-    has_dim = any(k in q for kws in spec.dim_keywords.values() for k in kws) or any(
-        v in q for vals in dim_vals.values() for v in vals
-    )
     # 预测未来：数据不可达 → 拒答而非编造
     if any(w in q for w in ("预测", "未来", "下个月", "下季度", "明年", "预计")):
         return {
@@ -236,7 +232,7 @@ def _parse_question(q: str, spec=None) -> dict:
                     filters.append({"field": fname, "op": "=", "value": picked})
                     break
     # 值已作为过滤条件时，从分组维度中移除（避免单值分组噪音）
-    for f in list(filters):
+    for f in filters:
         if f["field"] in dims:
             dims.remove(f["field"])
 

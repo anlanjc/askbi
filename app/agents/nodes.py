@@ -135,7 +135,7 @@ async def clarifier_node(state: GraphState) -> dict:
         }
     try:
         verdict = _loose_json(resp.content)
-    except Exception:
+    except Exception:  # noqa: BLE001  LLM 输出形态不可枚举，解析失败按设计降级为放行
         verdict = {"verdict": "clear", "reason": "解析失败默认放行"}
     v = verdict.get("verdict", "clear")
     update: dict = {"usage": _record_usage(state, "clarifier", resp)}
@@ -198,7 +198,7 @@ async def sql_agent_node(state: GraphState) -> dict:
     except LLMError as e:
         # 生成服务不可用 → 诚实拒答（不带出编造 DSL，也不 500）
         return {
-            "refusal": f"查询生成服务暂时不可用，请稍后重试",
+            "refusal": "查询生成服务暂时不可用，请稍后重试",
             "status": "refused",
             "events": _merge_events(
                 state, _event(state, "sql_agent", "llm_unavailable", {"error": str(e)})
@@ -207,7 +207,7 @@ async def sql_agent_node(state: GraphState) -> dict:
     usage = _record_usage(state, "sql_agent", resp)
     try:
         raw = _loose_json(resp.content)
-    except Exception:
+    except Exception:  # noqa: BLE001  LLM 输出形态不可枚举，解析失败转结构化报错走拒答
         raw = {"error": "DSL 输出无法解析"}
 
     if "error" in raw:
@@ -436,7 +436,6 @@ def _build_chart(state: GraphState) -> dict | None:
     cols, rows = result.get("columns", []), result.get("rows", [])
     if not cols or not rows:
         return None
-    dsl = state.get("dsl") or {}
     dims = [c for c in cols[:-1]] or []
     if not dims:
         return None
@@ -537,7 +536,7 @@ async def qa_node(state: GraphState) -> dict:
         )
         try:
             verdict = _loose_json(resp.content)
-        except Exception:
+        except Exception:  # noqa: BLE001  LLM 输出形态不可枚举，解析失败退回确定性结论
             verdict = {"passed": not det_issues, "issues": det_issues}
     except LLMError:
         # 质检 LLM 不可用 → 退回纯确定性结论（数值核验仍然生效，语义判断缺席要如实呈现）

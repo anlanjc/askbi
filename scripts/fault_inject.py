@@ -24,12 +24,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.agents import nodes  # noqa: E402
-from app.agents.graph import run_ask  # noqa: E402
-from app.config import get_settings  # noqa: E402
-from app.data.sandbox import Sandbox  # noqa: E402
-from app.llm.base import ChatRequest, LLMError, LLMResponse, TokenUsage  # noqa: E402
-from app.llm.mock import MockLLM  # noqa: E402
+from app.agents import nodes
+from app.agents.graph import run_ask
+from app.config import get_settings
+from app.data.sandbox import Sandbox
+from app.llm.base import ChatRequest, LLMError, LLMResponse, TokenUsage
+from app.llm.mock import MockLLM
 
 
 class AlwaysFailLLM:
@@ -178,10 +178,10 @@ async def main() -> int:
         "",
         "## 场景注记（诚实账）",
         "",
-        "- S1 的 refusal×1 是**确定性结果而非随机失败率**：故障配额 2 次恰好被第 1 次运行的"
-        "clarifier+sql_agent 消耗（该次运行拒答），第 2 次起全部恢复——这正是\"瞬时故障有限影响\"的预期形态。",
-        "- S6 的问法刻意带指标词（\"销售额\"）以通过澄清器，让编造指标真正到达 sql_agent 的"
-        "白名单校验——若问\"净利润是多少\"会在澄清层就被反问，测不到白名单。",
+        ("- S1 的 refusal×1 是**确定性结果而非随机失败率**：故障配额 2 次恰好被第 1 次运行的"
+        "clarifier+sql_agent 消耗（该次运行拒答），第 2 次起全部恢复——这正是\"瞬时故障有限影响\"的预期形态。"),
+        ("- S6 的问法刻意带指标词（\"销售额\"）以通过澄清器，让编造指标真正到达 sql_agent 的"
+        "白名单校验——若问\"净利润是多少\"会在澄清层就被反问，测不到白名单。"),
     ]
 
     lines += [

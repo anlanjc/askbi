@@ -1,5 +1,4 @@
 """多轮指代消解测试：追问判定、实体替换、会话隔离、开关关闭零变化。"""
-import pytest
 
 from app.context import (
     SessionContext,
@@ -61,7 +60,7 @@ def test_member_level_followup_resolves():
 
 def test_nationwide_not_in_followup_lexicon():
     """"全国"是路由概念不是过滤取值，不进消解词表（换入会产生非法过滤值）。"""
-    resolved, note = resolve_followup("那全国呢", "上月华南地区的销售额", enabled=True)
+    resolved, _note = resolve_followup("那全国呢", "上月华南地区的销售额", enabled=True)
     assert resolved == "那全国呢"  # 保守回退独立问题
 
 

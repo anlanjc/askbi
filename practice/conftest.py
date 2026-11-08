@@ -23,9 +23,9 @@ os.environ.setdefault("DB_PATH", str(TEST_DB_DIR / "test.duckdb"))
 os.environ.setdefault("GENERATOR_MONTHS", "12")
 os.environ.setdefault("RAG_BACKEND", "tfidf")
 
-import pytest  # noqa: E402
+import pytest
 
-from app.config import get_settings  # noqa: E402
+from app.config import get_settings
 
 
 @pytest.fixture(scope="session")

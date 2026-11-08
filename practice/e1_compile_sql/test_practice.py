@@ -5,13 +5,19 @@
 
 import pytest
 from pydantic import ValidationError
-
-from skeleton import CompileError, Filter, QueryDSL, TimeRange, compile_sql, validate_filter_values
+from skeleton import (
+    CompileError,
+    Filter,
+    QueryDSL,
+    TimeRange,
+    compile_sql,
+    validate_filter_values,
+)
 
 
 def _dsl(**kw) -> QueryDSL:
-    base = dict(intent="aggregate", metric="revenue", dimensions=[],
-                filters=[], time=TimeRange(mode="all"))
+    base = {"intent": "aggregate", "metric": "revenue", "dimensions": [],
+                "filters": [], "time": TimeRange(mode="all")}
     base.update(kw)
     return QueryDSL(**base)
 

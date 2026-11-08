@@ -178,20 +178,24 @@ function fmtNum(v) {
 const ANSWERS = [];   // 每张答案卡对应 {q, a}，「导出 CSV」按索引取用
 
 function renderAnswer(a, q) {
+  // AB-HR1 红队复验（2026-11-09）：ASK-5 的"服务端可控文本一律 esc 再入 DOM"原则
+  // 在 renderAnswer 各分支漏了 refusal/clarify 消息、narrative、qa issues 与表格
+  // 单元格——refusal 消息可携带 LLM 原始字段名（校验错误回显），真模型部署下构成
+  // 二阶注入链，现按同一原则补齐。
   if (a.kind === "clarify") {
-    const opts = (a.options || []).map(o => `<button onclick="useOption(this)">${o}</button>`).join("");
-    return `<div class="card"><h3>🤔 需要澄清</h3><div class="summary">${a.message}</div><div class="options">${opts}</div></div>`;
+    const opts = (a.options || []).map(o => `<button onclick="useOption(this)">${esc(o)}</button>`).join("");
+    return `<div class="card"><h3>🤔 需要澄清</h3><div class="summary">${esc(a.message)}</div><div class="options">${opts}</div></div>`;
   }
   if (a.kind === "refusal" || a.kind === "error") {
-    return `<div class="card"><h3>${a.kind === "refuse" ? "🚫" : "⚠️"} ${a.kind === "refusal" ? "拒答" : "出错了"}</h3><div class="narrative">${a.message}</div></div>`;
+    return `<div class="card"><h3>${a.kind === "refuse" ? "🚫" : "⚠️"} ${a.kind === "refusal" ? "拒答" : "出错了"}</h3><div class="narrative">${esc(a.message)}</div></div>`;
   }
-  let html = `<div class="card"><h3>📊 回答</h3><div class="summary">${a.summary || ""}</div>`;
-  if (a.narrative) html += `<div class="narrative">${a.narrative}</div>`;
+  let html = `<div class="card"><h3>📊 回答</h3><div class="summary">${esc(a.summary || "")}</div>`;
+  if (a.narrative) html += `<div class="narrative">${esc(a.narrative)}</div>`;
   if (a.chart) html += `<div id="chart-${Date.now()}" class="chartbox"></div>`;
   if (a.table && a.table.rows && a.table.rows.length) {
     const t = a.table;
-    html += `<details open><summary>数据表（${t.rows.length} 行）</summary><table><thead><tr>${t.columns.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>`;
-    t.rows.slice(0, 30).forEach(r => { html += `<tr>${r.map(v => `<td>${fmtNum(v)}</td>`).join("")}</tr>`; });
+    html += `<details open><summary>数据表（${t.rows.length} 行）</summary><table><thead><tr>${t.columns.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>`;
+    t.rows.slice(0, 30).forEach(r => { html += `<tr>${r.map(v => `<td>${esc(fmtNum(v))}</td>`).join("")}</tr>`; });
     html += `</tbody></table></details>`;
   }
   if (a.sql) html += `<details><summary>SQL 与口径</summary><pre>${esc(a.sql)}</pre><div class="narrative" style="font-size:12.5px;color:var(--dim)">${esc(a.caliber || "")}</div></details>`;
@@ -200,8 +204,8 @@ function renderAnswer(a, q) {
     html += `<details ${a.qa.passed ? "" : "open"}><summary>质检报告</summary>
       <span class="badge ${cls}">${a.qa.passed ? "数值核验通过" : "核验未通过"}</span>
       <span class="badge">核验数字 ${a.qa.numbers_checked} 个</span>
-      ${(a.qa.deterministic_issues || []).map(i => `<div style="color:var(--err);font-size:12px">• ${i}</div>`).join("")}
-      ${(a.qa.llm_issues || []).map(i => `<div style="color:var(--warn);font-size:12px">• ${i}</div>`).join("")}</details>`;
+      ${(a.qa.deterministic_issues || []).map(i => `<div style="color:var(--err);font-size:12px">• ${esc(i)}</div>`).join("")}
+      ${(a.qa.llm_issues || []).map(i => `<div style="color:var(--warn);font-size:12px">• ${esc(i)}</div>`).join("")}</details>`;
   }
   if (a.data_badge) {
     const b = a.data_badge;

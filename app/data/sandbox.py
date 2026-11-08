@@ -24,11 +24,15 @@ from .schema import MASKED_FIELDS
 _FORBIDDEN = re.compile(
     r"\b(insert|update|delete|drop|alter|create|attach|detach|copy|export|import|"
     r"pragma|call|set|prepare|execute|vacuum|checkpoint|"
-    r"read_csv|read_csv_auto|read_text|read_blob|read_json|glob|install|load)\b",
+    r"read_csv|read_csv_auto|read_text|read_blob|read_json|glob|install|load|"
+    r"parquet_scan|iceberg_scan|delta_scan|postgres_scan|mysql_scan|sqlite_scan)\b",
     re.IGNORECASE,
 )
 # ASK-1 修复：黑名单是黑名单，物理封禁才是城墙——连接层禁用外部访问后，
-# 表函数读文件/装扩展在 DuckDB 引擎层直接失败（评审 2.0 P0 纵深加固）
+# 表函数读文件/装扩展在 DuckDB 引擎层直接失败（评审 2.0 P0 纵深加固）。
+# AB-HR1 红队发现（2026-11-09）：parquet_scan 文件读取家族不在黑名单——曾只剩
+# enable_external_access=False 单层防御（探查实锤：parquet_scan 穿过 guard 后
+# 由引擎 Permission Error 兜住），现补齐已知 *_scan 家族恢复双层纵深。
 _CONNECT_CONFIG = {"enable_external_access": False}
 _MAX_ROWS = 1000
 

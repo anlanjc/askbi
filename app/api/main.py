@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import time
@@ -105,7 +106,7 @@ def _get_suspend_graph():
 
 
 @app.post("/api/ask")
-async def ask(body: AskRequest):
+async def ask(body: AskRequest, request: Request):
     """SSE 流式执行：node_done / event / final 三类消息。"""
     from ..config import get_settings
     from ..context import get_session_context, resolve_followup
@@ -118,11 +119,17 @@ async def ask(body: AskRequest):
             body.question, ctx.get(body.session_id),
             enabled=get_settings().followup_enabled)
         ctx.set(body.session_id, question)   # 存改写后的完整问题作下轮上下文
-    task = get_task_store().create(question, body.role)
+    owner = _owner_hash(request)   # AB-HR2：开启时无 token → 401（落任务前拒绝）
+    task = get_task_store().create(question, body.role, owner=owner)
     t0 = time.perf_counter()
 
     # E4②：澄清挂起拓扑（CLARIFY_SUSPEND_ENABLED=1 时启用挂起图 + thread 配置）
     suspend_on = get_settings().clarify_suspend_enabled
+    # AB-HR2：挂起 thread 建立（新问题，非 resume）时登记属主（thread_id 可由客户端
+    # 自供，与任务 id 不同命名空间——注册表是属主校验的权威源，与 InMemorySaver
+    # 同生命周期）。resume 不绑定：否则会先给未知 thread 绑上属主再校验，绕过 fail-closed。
+    if suspend_on and owner is not None and not body.resume:
+        get_task_store().bind_thread_owner(body.thread_id or task["id"], owner)
     # ASK-7 修复（评审 2.0）：resume 前置条件曾零校验——开关关时 resume=true 被静默
     # 丢弃，澄清答案被当全新问题跑图出数；thread 缺失同样静默错跑。请求期显式拒绝。
     if body.resume:
@@ -130,6 +137,15 @@ async def ask(body: AskRequest):
             raise HTTPException(status_code=422, detail="澄清挂起未启用，resume 请求无效")
         if not body.thread_id:
             raise HTTPException(status_code=422, detail="resume 请求必须携带 thread_id")
+        # AB-HR2：属主校验在取图状态之前——thread 未登记/无绑定均 fail-closed 403
+        # （无法证明属主的 thread 一律不放行，宁拒不误放）。
+        if get_settings().owner_check_enabled:
+            bound = get_task_store().thread_owner(body.thread_id)
+            if bound is None:
+                raise HTTPException(status_code=403,
+                                    detail="thread has no owner binding; cannot verify ownership")
+            if not hmac.compare_digest(_owner_hash(request) or "", bound):
+                raise HTTPException(status_code=403, detail="not the owner of this thread")
         graph = _get_suspend_graph()
         snap = await graph.aget_state({"configurable": {"thread_id": body.thread_id}})
         if not snap.next:
@@ -207,16 +223,23 @@ async def ask(body: AskRequest):
 
 
 @app.get("/api/tasks")
-async def list_tasks():
-    return get_task_store().list()
+async def list_tasks(request: Request):
+    """任务列表。AB-HR2：owner_check_enabled 开启时按属主过滤（只回本人任务）。"""
+    store = get_task_store()
+    if not get_settings().owner_check_enabled:
+        return store.list()
+    owner = _owner_hash(request)   # 401 when token missing
+    mine = [t for t in store.list(limit=200) if t.get("owner") == owner]
+    return mine[:50]
 
 
 @app.get("/api/export")
-async def export_csv(task_id: str):
+async def export_csv(task_id: str, request: Request):
     """把一次问答的答案表导出 CSV（BOM+元信息+SQL 口径+数据表，Excel 直开）。"""
     t = get_task_store().get(task_id)
     if not t:
         raise HTTPException(status_code=404, detail="task not found")
+    _require_owner(request, t)   # AB-HR2：非属主 403（在暴露答案存在性之前）
     if not t.get("answer"):
         raise HTTPException(status_code=409, detail="task has no answer yet")
     csv_text = answer_to_csv(t["answer"], question=t.get("question") or "", role=t.get("role") or "")
@@ -230,16 +253,21 @@ async def export_csv(task_id: str):
 
 
 @app.get("/api/tasks/{task_id}")
-async def task_detail(task_id: str):
+async def task_detail(task_id: str, request: Request):
     t = get_task_store().get(task_id)
     if not t:
         raise HTTPException(status_code=404, detail="task not found")
+    _require_owner(request, t)   # AB-HR2：明细含全量 events/答案，非属主 403
     return t
 
 
 @app.post("/api/feedback")
-async def feedback(body: FeedbackRequest):
+async def feedback(body: FeedbackRequest, request: Request):
     """thumbs 反馈：👍/👎 附着到任务，随任务落盘（指标看板 /api/metrics 可见汇总）。"""
+    existing = get_task_store().get(body.task_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    _require_owner(request, existing)   # AB-HR2：先校验属主再落反馈
     t = get_task_store().set_feedback(body.task_id, body.value, body.comment)
     if t is None:
         raise HTTPException(status_code=404, detail="task not found")
@@ -247,6 +275,36 @@ async def feedback(body: FeedbackRequest):
 
 
 # ---------------- 管理面（审计日志见 app/audit.py：谁在何时通过什么改了什么） ----------------
+
+def _owner_hash(request: Request) -> str | None:
+    """属主标识（AB-HR2）：owner_check_enabled 时从 X-Owner-Token 派生 SHA-256。
+
+    明文 token 不落盘（tasks.jsonl 可回放可导出，存哈希与 agentgate virtual key
+    的 SHA-256 指纹同哲学）；开关关时恒返回 None——存量行为逐字零变化。
+    开启且未出示 token → 401（未认证），与 403（非属主）语义分离。
+    """
+    if not get_settings().owner_check_enabled:
+        return None
+    token = request.headers.get("X-Owner-Token", "")
+    if not token:
+        raise HTTPException(status_code=401,
+                            detail="owner check enabled: X-Owner-Token required")
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _require_owner(request: Request, task: dict) -> None:
+    """thread 属主校验（AB-HR2，fail-closed）：开关关=不校验（零变化）；
+    开=任务无绑定（开关开启前创建）、记录哈希与出示哈希不匹配 → 一律 403。"""
+    if not get_settings().owner_check_enabled:
+        return
+    task_owner = task.get("owner")
+    if task_owner is None:
+        raise HTTPException(status_code=403,
+                            detail="task has no owner binding (created before owner check enabled)")
+    owner = _owner_hash(request) or ""
+    if not hmac.compare_digest(owner, task_owner):
+        raise HTTPException(status_code=403, detail="not the owner of this thread")
+
 
 def _require_admin(request: Request) -> None:
     """管理面门禁：admin_token 配置后要求 X-Admin-Token（常量时间比较）；

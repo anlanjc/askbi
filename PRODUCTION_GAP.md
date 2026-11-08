@@ -23,7 +23,7 @@
 |---|---|---|---|---|
 | 1 | **真实流量与用户**：无 DAU/QPS 生产数据 | 没有真实查询分布，评测集覆盖不到长尾问法 | 公网部署（DEPLOY.md 已就绪）+ PILOT_TEMPLATE 5-10 人试用 + 试用问题回流评测集 | 部署半天 + 试点 1 周（零代码） |
 | 2 | **多租户**：仅单层 API key | 不同部门/客户的数据权限与配额要隔离 | role→tenant 映射进 DatasetSpec、per-key 配额中间件、审计日志（谁在何时查了什么） | 3-5 天 |
-| 2b | **任务接口无属主隔离**（评审 2.0 ASK-6）：/api/tasks、/api/tasks/{id}（含 answer/events）、/api/export、/api/feedback 不区分调用方——行级权限只约束编译期执行不约束结果分发，部署后任意调用方可读他人全量答案。过渡口径：公开演示仅在有 API_KEY 时可接受；正式多租户前须把任务绑定调用方身份并按属主过滤 | role→任务绑定+属主过滤+admin 面板豁免 | 1-2 天 |
+| 2b | **任务接口无属主隔离**（评审 2.0 ASK-6）：/api/tasks、/api/tasks/{id}（含 answer/events）、/api/export、/api/feedback 不区分调用方——行级权限只约束编译期执行不约束结果分发，部署后任意调用方可读他人全量答案。过渡口径：公开演示仅在有 API_KEY 时可接受；正式多租户前须把任务绑定调用方身份并按属主过滤。**【2026-11-09 AB-HR2：第一块拼图已落地】`OWNER_CHECK_ENABLED` 开关（默认关零漂移）：thread 创建绑定 X-Owner-Token（SHA-256 落盘，明文不落盘），resume/明细/反馈/导出/列表过滤全路径校验，非属主 403 fail-closed，绑定劫持防护；设计记录 docs/owner_isolation_adr.md（含被否方案）。剩余：正式多租户身份体系、/api/metrics 聚合口径、前端接线 token** | role→任务绑定+属主过滤+admin 面板豁免 | 1-2 天 |
 | 3 | **可观测性**：trace 落盘 JSONL+进程内计数器 | 生产要实时告警与跨服务追踪 | OpenTelemetry exporter + Prometheus 指标（错误率/P95/每 token 成本）+ SLO 告警规则 | 3-4 天 |
 | 4 | **数据层规模**：DuckDB 单文件只读 | 亿级行/高并发写需要列存集群；当前分析负载（只读聚合）单机够用 | 触发条件见下表；到量迁 ClickHouse/StarRocks，语义层 registry 已把换源成本压到"换 spec" | 视数据量 1-2 周 |
 | 5 | **高可用**：单进程 uvicorn | 单点故障、发布即停服 | 多副本+负载均衡、healthz 就绪探针、优雅重启（drain SSE 连接）、LLM 供应商双活（DashScope 主+DeepSeek 备） | 4-5 天 |

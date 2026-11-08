@@ -25,7 +25,30 @@ class TaskStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._tasks: dict[str, dict] = {}
         self._lock = threading.Lock()   # 守护管理面复合变更窗口（见 clear）
+        # AB-HR2：thread_id → 属主哈希注册表（仅属主隔离开启且有挂起拓扑时写入）。
+        # 与 InMemorySaver checkpointer 同生命周期：挂起的 thread 本就不跨重启，
+        # 内存态注册表不引入新的持久化面。FIFO 上限防长跑无界增长（ASK-9 同思路）。
+        self._thread_owners: dict[str, str | None] = {}
         self._load()
+
+    # ---- AB-HR2 thread 属主注册表 ----
+
+    _MAX_THREAD_OWNERS = 4096
+
+    def bind_thread_owner(self, thread_id: str, owner: str | None) -> None:
+        """挂起 thread 建立时登记属主。setdefault 语义：已有绑定不覆盖——
+        防止攻击者以同 thread_id 重新提问改写属主（绑定劫持）。"""
+        if not thread_id:
+            return
+        with self._lock:
+            if len(self._thread_owners) >= self._MAX_THREAD_OWNERS and thread_id not in self._thread_owners:
+                self._thread_owners.pop(next(iter(self._thread_owners)), None)
+            self._thread_owners.setdefault(thread_id, owner)
+
+    def thread_owner(self, thread_id: str) -> str | None:
+        """未登记的 thread 返回 None（fail-closed：无法证明属主）。"""
+        with self._lock:
+            return self._thread_owners.get(thread_id)
 
     def _load(self) -> None:
         if not self.path.exists():
@@ -39,7 +62,7 @@ class TaskStore:
             except Exception:  # noqa: BLE001, S112  # 损坏行跳过（追加日志的有意容错）
                 continue
 
-    def create(self, question: str, role: str) -> dict:
+    def create(self, question: str, role: str, owner: str | None = None) -> dict:
         t = {
             "id": uuid.uuid4().hex[:12],
             "question": question,
@@ -52,6 +75,10 @@ class TaskStore:
             "usage": {},
             "events": [],
         }
+        if owner:
+            # AB-HR2：属主绑定只在开关开启时存在（owner=SHA-256 哈希）——
+            # 开关关时任务记录逐字节零变化（owner 键不出现）。
+            t["owner"] = owner
         with self._lock:
             # ASK-3 修复（评审 2.0）：create/finish/set_feedback 曾不取锁，与 clear 的
             # 复合变更窗口竞态——finish 下标直接 KeyError 冲出 SSE 生成器，客户端

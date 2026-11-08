@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     api_key: str = ""
     # 管理面门禁：留空=开放但全审计（演示友好，与 api_key 同哲学）；配置后 /api/admin/* 须带 X-Admin-Token
     admin_token: str = ""
+    # AB-HR2 属主隔离（PRODUCTION_GAP 2b 第一块拼图）：默认关=存量行为逐字零变化；
+    # 开启后 thread 创建绑定 X-Owner-Token（SHA-256 落盘，明文不落盘），
+    # resume/任务明细/反馈/导出/列表过滤全路径校验属主，非属主 403（fail-closed）。
+    # 属安全姿态开关而非演示功能——不进 PROFILE=full 自动开启清单。
+    owner_check_enabled: bool = False
 
     @property
     def db_abs_path(self) -> Path:

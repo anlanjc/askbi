@@ -92,3 +92,16 @@ LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset
 - 管理面审计日志（11-05）："同事务"语义由 JSONL 翻译实现——变更与审计同锁窗口落盘、审计写失败变更回滚（app/audit.py 模块头有完整推导）；任务清除的归档改名假定单 worker 部署口径，多 worker 管理面属 PRODUCTION_GAP；ADMIN_TOKEN 留空=开放但全审计（与 api_key 同哲学）。
 - HTTP 全栈压测（11-05）：客户端与 uvicorn 同机共址，delay=0 高并发点位 QPS 受 CPU 争抢压制（0.53×），**不当服务端容量上限使用**；delay=300ms（真实形态近似）下 0.92~0.97× 才是部署参考口径。
 - 下一步：200+ 条评测集、RAG 样例库按数据集隔离、真实部署与灰度。
+
+## 7. 安全纵深批次（AB-HR，2026-11-09，任务卡 HANDOFF_askbi-hardening.md）
+
+四任务四提交（ead5667→0221df3），红线自查：全程 mock、冻结口径逐字复现、冻结评测集文件 md5 零改动、.env 零改动、未 push。
+
+- **T1 红队攻击面套件**（ead5667）：`tests/test_redteam.py` 93 测试项 + `evidence/redteam_report.md`（47 SQL 注入 + 24 行级权限绕过 + 12 提示注入 payload 逐条行为判定 + 12 XSS sink 静态钉死）。发现并修复 2 真缺陷：①沙箱黑名单缺 `*_scan` 文件读取函数家族（parquet_scan 等曾穿 guard，只剩 enable_external_access=False 单层防御）→ 补齐恢复双层纵深；②前端 renderAnswer 分支漏 esc()（refusal 消息可携带 LLM 原始字段名——校验错误回显，真模型下二阶注入链）→ 按 ASK-5 原则补齐。观察项 2 条如实记录（OrderBy.metric 无校验但物理不可达 SQL——不变量钉死；duckdb_functions 自省低危接受）。
+- **T2 thread 属主隔离**（a9c458d）：`OWNER_CHECK_ENABLED` 开关（默认关=存量零变化），开启后 X-Owner-Token→SHA-256 绑定任务与 thread（内存注册表，与 checkpointer 同生命周期，setdefault 防绑定劫持），resume/明细/反馈/导出/列表过滤全路径校验，非属主 403 fail-closed；设计记录 docs/owner_isolation_adr.md（含被否方案），PRODUCTION_GAP 2b 落地注记。
+- **T3 ruff 存量清零**（a6b5dd1）：118→0（规则扩张后实际量，超 S2 注记的 ~30）；手工项逐处核运行时等价性；B017 收窄暴露 test_engine_blocks_external_access 名实不符（旧载荷实际测的是 guard 层非引擎墙）→ 改直连引擎真墙测试；顺带补同族漏词 read_parquet。
+- **T4 评测扩容**（0221df3）：`eval/dataset_v2_140.json` = 冻结 116 条逐字保留 + 新增 32 条（query 13/drill 6/clarify 7/refusal 6，batch 字段标注）；金标一律 compile_sql 生成；构建期自检（scripts/build_dataset_v2_140.py）一次通过。评测驱动修复 2 真缺陷：①router heavy 正则漏「归因」（route_reason 文案与实现不同源，误入 light 跳过叙述与质检）；②runner drill 判分裸 and 链在空叙述答案上短路成 str 致聚合崩溃（抽 judge_item 显式 bool 化）。回归 tests/test_eval_runner.py 6 项。
+
+**终态（0221df3 后复测）**：pytest **257 绿**（基线 146 + 红队 94 + 属主 11 + 评测回归 6）；ruff 全绿；mock 评测五套全 100%——v1 33/33、冻结 v2 116/116、扩容 v2_140 **148/148**、B 集 26/26（DATASET=coffee）、C 集 26/26（DATASET=saas）；冻结评测集五文件 md5 与批次前逐一相同。
+
+**险情如实记录**：T4 期间因 .env 默认 provider=openai_compatible，两次评测启动误触真模型链路（请求挂系统代理层未完成、无 item 完成、即杀）——可能产生少量真模型调用花费（上限≈单次全量评测的 ¥2 级别，很可能近零），账单以百炼/DeepSeek 后台为准；此后所有评测与脚本显式 `LLM_PROVIDER=mock`。

@@ -76,6 +76,30 @@ def judge_query(answer: dict, gold_sql: str, db_path=None) -> tuple[bool, str]:
     return False, f"结果不一致：{len(a)}行 vs gold {len(b)}行"
 
 
+def judge_item(kind: str, answer: dict, gold_sql: str | None, db_path=None) -> tuple[bool, str]:
+    """单条判分（kind 分发，run() 与回归测试共用）。
+
+    AB-HR4 修复：drill 判分曾用裸 and 链——light 链路跳过 insight/qa 时
+    （kind=answer 但 narrative=""），ok 会短路成 ""（str），聚合处
+    `c["ok"] += r["ok"]` 以 int+str 崩溃；现显式 bool 化，空叙述即判 False。
+    """
+    if kind == "query":
+        return judge_query(answer, gold_sql or "", db_path=db_path)
+    if kind == "refusal":
+        ok = answer.get("kind") == "refusal"
+        return ok, ("" if ok else f"期望拒答，得到 {answer.get('kind')}")
+    if kind == "clarify":
+        ok = answer.get("kind") == "clarify"
+        return ok, ("" if ok else f"期望澄清，得到 {answer.get('kind')}")
+    # drill：答案正常 + 有叙述 + QA 数值核验通过
+    ok = bool(
+        answer.get("kind") == "answer"
+        and answer.get("narrative")
+        and (answer.get("qa") or {}).get("passed")
+    )
+    return ok, ("" if ok else "归因链路未走通或数值核验未通过")
+
+
 async def run(
     provider_tag: str,
     ablation: str,
@@ -112,18 +136,7 @@ async def run(
         elapsed = (time.perf_counter() - t0) * 1000
         answer = state.get("answer") or {}
         kind = it["kind"]
-        detail = ""
-        if kind == "query":
-            ok, detail = judge_query(answer, it["gold_sql"], db_path=judge_db)
-        elif kind == "refusal":
-            ok = answer.get("kind") == "refusal"
-            detail = "" if ok else f"期望拒答，得到 {answer.get('kind')}"
-        elif kind == "clarify":
-            ok = answer.get("kind") == "clarify"
-            detail = "" if ok else f"期望澄清，得到 {answer.get('kind')}"
-        else:  # drill
-            ok = answer.get("kind") == "answer" and answer.get("narrative") and (answer.get("qa") or {}).get("passed")
-            detail = "" if ok else "归因链路未走通或数值核验未通过"
+        ok, detail = judge_item(kind, answer, it.get("gold_sql"), db_path=judge_db)
         # 数值一致性（叙述非空时）
         num_ok = None
         if answer.get("narrative"):

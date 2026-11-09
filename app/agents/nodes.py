@@ -84,12 +84,14 @@ def route_node(state: GraphState) -> dict:
             "events": _merge_events(state, _event(state, "router", "route",
                                                   {"depth": explicit, "reason": "explicit"})),
         }
-    heavy = bool(re.search(r"(为什么|原因|为何|趋势|走势|对比|vs|各|每个|按)", q)) or any(
+    heavy = bool(re.search(r"(为什么|原因|为何|归因|趋势|走势|对比|vs|各|每个|按)", q)) or any(
         w in q for w in _WHY_WORDS
     )
     depth = "full" if heavy else "light"
     reason = (
         "包含归因/趋势/对比语义，走完整图（含下钻与质检修订）"
+        # AB-HR4：正则补「归因」——route_reason 文案宣称归因语义走 full，实现曾漏该词
+        # （「归因一下…」此前误入 light 链路，叙述与质检被跳过；评测扩容期抓出）
         if heavy else "简单聚合查询，走轻量链路（跳过下钻叙述）"
     )
     return {

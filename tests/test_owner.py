@@ -211,3 +211,36 @@ def test_thread_binding_cannot_be_hijacked(client, owner_on, suspend_on):
                                       "thread_id": "t-hij", "resume": True},
                     headers=_h("bob-token"))
     assert r.status_code == 403
+
+
+# ---------------- ASK-13（评审 3.0）：非 resume 写路径的属主校验 ----------------
+
+def test_non_resume_cross_owner_thread_403(client, owner_on, suspend_on):
+    """ASK-13 复现路径：受害者挂起澄清后，攻击者对同 thread_id 发**新问题**（非
+    resume）必须 403——setdefault 只防改属主，不防用别人的 thread 跑图顶掉挂起中的
+    澄清状态。修复前 bob 200 跑图（红），修复后 403 且受害者 resume 不受影响。"""
+    r1 = client.post("/api/ask", json={"question": "最近卖得怎么样", "thread_id": "t-x13"},
+                     headers=_h("alice-token"))
+    assert r1.status_code == 200 and "clarify_pending" in r1.text
+
+    r_bob = client.post("/api/ask", json={"question": "我的密码是多少", "thread_id": "t-x13"},
+                        headers=_h("bob-token"))
+    assert r_bob.status_code == 403
+    assert "not the owner" in r_bob.text
+
+    # 受害者的挂起澄清未被顶掉：alice 仍能 resume 出数（完整性）
+    r_ok = client.post("/api/ask", json={"question": "我想看销售额",
+                                         "thread_id": "t-x13", "resume": True},
+                       headers=_h("alice-token"))
+    assert r_ok.status_code == 200
+    assert '"kind": "answer"' in r_ok.text
+
+
+def test_non_resume_same_owner_thread_reask_ok(client, owner_on, suspend_on):
+    """属主本人对自己的已绑定 thread 重新提问不受影响（合法重问路径零变化）。"""
+    r1 = client.post("/api/ask", json={"question": "最近卖得怎么样", "thread_id": "t-self13"},
+                     headers=_h("alice-token"))
+    assert r1.status_code == 200 and "clarify_pending" in r1.text
+    r2 = client.post("/api/ask", json={"question": "上月销售额", "thread_id": "t-self13"},
+                     headers=_h("alice-token"))
+    assert r2.status_code == 200

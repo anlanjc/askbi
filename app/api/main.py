@@ -129,6 +129,13 @@ async def ask(body: AskRequest, request: Request):
     # 自供，与任务 id 不同命名空间——注册表是属主校验的权威源，与 InMemorySaver
     # 同生命周期）。resume 不绑定：否则会先给未知 thread 绑上属主再校验，绕过 fail-closed。
     if suspend_on and owner is not None and not body.resume:
+        # ASK-13 修复（评审 3.0）：属主校验从 resume 扩展到非 resume 写路径——
+        # bind 的 setdefault 只防"改属主"，不防"用别人的 thread 跑图"（可在受害者
+        # 挂起中的 thread 上追加超步顶掉澄清状态）。thread 已绑定且非本人 → 403，
+        # 与 resume 侧同款 fail-closed；未绑定/本人绑定 → 放行（后者 setdefault 保持原绑定）。
+        bound = get_task_store().thread_owner(body.thread_id or task["id"])
+        if bound is not None and not hmac.compare_digest(owner, bound):
+            raise HTTPException(status_code=403, detail="not the owner of this thread")
         get_task_store().bind_thread_owner(body.thread_id or task["id"], owner)
     # ASK-7 修复（评审 2.0）：resume 前置条件曾零校验——开关关时 resume=true 被静默
     # 丢弃，澄清答案被当全新问题跑图出数；thread 缺失同样静默错跑。请求期显式拒绝。

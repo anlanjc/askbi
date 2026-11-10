@@ -22,7 +22,7 @@
 - **校验面（开启时）**：
   | 端点 | 非属主 | 未出示 token |
   |---|---|---|
-  | POST /api/ask（新问题） | —（创建即绑定） | 401 |
+  | POST /api/ask（新问题） | 403（thread 已绑定且非本人——ASK-13 修复，此前"—"实为放行他人 thread 跑图） | 401 |
   | POST /api/ask（resume） | 403 | 401 |
   | GET /api/tasks/{id} | 403 | 401 |
   | POST /api/feedback | 403 | 401 |
@@ -30,7 +30,9 @@
   | GET /api/tasks（列表） | 按属主过滤 | 401 |
 - **fail-closed 三条**：开关开启前创建的无绑定任务 → 403（任何调用方含任意 token）；
   未登记/无绑定的 thread resume → 403（先于 ASK-7 的 409 语义）；哈希比较走
-  `hmac.compare_digest`（常数时间）。
+  `hmac.compare_digest`（常数时间）。ASK-13（评审 3.0）补齐：非 resume 请求对**已绑定
+  且非本人**的 thread 一律 403——setdefault 只防改属主，不防用别人的 thread 跑图
+  顶掉挂起中的澄清；未绑定 thread 仍创建即绑定（客户端自供 thread_id 的攻击面由本条收口）。
 
 ## 被否方案
 
@@ -48,6 +50,6 @@
 
 ## 测试锚点
 
-`tests/test_owner.py`（11 项）：开关关全链零变化 ×2 / 绑定+SHA-256+属主全通 / 越权 403+未出示 401
+`tests/test_owner.py`（13 项）：开关关全链零变化 ×2 / 绑定+SHA-256+属主全通 / 越权 403+未出示 401
 全路径 / 列表过滤 / 无绑定 fail-closed / resume 允许-拒绝-401 / 无绑定 thread resume fail-closed /
-未知 thread fail-closed / 绑定劫持防护。
+未知 thread fail-closed / 绑定劫持防护 / ASK-13 非 resume 跨属主 403+本人重问放行 ×2。

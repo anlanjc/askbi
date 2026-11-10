@@ -69,7 +69,21 @@ def _loose_json(text: str) -> dict:
 
 # ---------------- 1. router（纯代码：规则优先，省一次 LLM 调用） ----------------
 
-_WHY_WORDS = ("为什么", "原因", "为何", "下滑", "增长", "怎么回事", "怎么回事", "分析下", "分析一下")
+# heavy 触发词单一来源（S9-OPT2，AB-HR4 教训制度化）：语义类别 → 触发词。
+# route_reason 文案与 heavy 判定都从这里生成，两处手维护的漂移从结构上不可能再发生
+# （AB-HR4：文案宣称「归因」走 full，正则曾漏该词，靠评测撞上才抓出）；
+# tests/test_router_consistency.py 逐词探针 + 文案比对守门，任一侧独有词即 fail。
+# 触发词集合与 0221df3 修复后的（正则 ∪ _WHY_WORDS）完全一致，路由判定零变化。
+_ROUTE_HEAVY_VOCAB: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("归因", ("为什么", "原因", "为何", "归因", "怎么回事", "分析下", "分析一下")),
+    ("趋势", ("趋势", "走势", "下滑", "增长")),
+    ("对比", ("对比", "vs")),
+    ("分组", ("各", "每个", "按")),
+)
+_ROUTE_HEAVY_WORDS: tuple[str, ...] = tuple(
+    dict.fromkeys(w for _label, words in _ROUTE_HEAVY_VOCAB for w in words)
+)
+_HEAVY_PATTERN = "|".join(re.escape(w) for w in _ROUTE_HEAVY_WORDS)
 
 
 def route_node(state: GraphState) -> dict:
@@ -84,14 +98,10 @@ def route_node(state: GraphState) -> dict:
             "events": _merge_events(state, _event(state, "router", "route",
                                                   {"depth": explicit, "reason": "explicit"})),
         }
-    heavy = bool(re.search(r"(为什么|原因|为何|归因|趋势|走势|对比|vs|各|每个|按)", q)) or any(
-        w in q for w in _WHY_WORDS
-    )
+    heavy = bool(re.search(_HEAVY_PATTERN, q))
     depth = "full" if heavy else "light"
     reason = (
-        "包含归因/趋势/对比语义，走完整图（含下钻与质检修订）"
-        # AB-HR4：正则补「归因」——route_reason 文案宣称归因语义走 full，实现曾漏该词
-        # （「归因一下…」此前误入 light 链路，叙述与质检被跳过；评测扩容期抓出）
+        f"包含{'/'.join(label for label, _ws in _ROUTE_HEAVY_VOCAB)}语义，走完整图（含下钻与质检修订）"
         if heavy else "简单聚合查询，走轻量链路（跳过下钻叙述）"
     )
     return {

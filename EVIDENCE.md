@@ -41,7 +41,7 @@
 | 压测（进程内） | 12 点位矩阵 | 编排上限 110-124 QPS；300ms 模拟延迟下 P50≈1.2s≈4×LLM（10-28 存档，11-05 同日复测 ±4% 内复现） | evidence/load_test.md |
 | **压测（HTTP 全栈双口径）** | 22 点位（进程内 vs uvicorn 真进程 SSE 全链，11-05） | c=1 差值法附加开销 **5.1ms**（框架地板 3.9ms + SSE 净附加 ≈1.2ms）；delay=300ms 下 HTTP≈进程内 **0.92~0.97×**（瓶颈=LLM 串行调用，框架被摊薄）；delay=0 高并发 0.53× 系**共址 CPU 争抢伪影**（诚实标注）；缓存收益随瓶颈位置变化（c=1 +36% / 高并发 +3~4%） | evidence/load_test_http.md |
 
-pytest：**137 项全绿**（11-05 实测；最新增量 = 管理面审计 8 项 + 数据源 C 8 项）。金标生成：`scripts/build_dataset_v2.py` / `scripts/build_dataset_b.py` / `scripts/build_dataset_c.py`（可重建/自检）。
+pytest：**268 项全绿**（11-11 实测；**测试数单一出处=本行**，README badge/项目结构节与这里同步刷新。ASK-14 勘误（评审 3.0）：此数曾停在 137，连续两批修复未刷数——现改为实跑滚动口径，各批次终态留档见 §7/§8。最新增量 = 评审 3.0 批：ASK-13 属主回归 2 项 + ASK-15 沙箱同族参数 9 项）。金标生成：`scripts/build_dataset_v2.py` / `scripts/build_dataset_b.py` / `scripts/build_dataset_c.py`（可重建/自检）。
 
 ## 5. 复现命令
 
@@ -51,7 +51,7 @@ pip install -r requirements.txt
 python scripts/gen_data.py                 # 种子 42，确定性重建 DuckDB
 
 # 测试与评测
-python -m pytest -q                        # 137 项（ASK-12 勘误：原 94 过时）
+python -m pytest -q                        # 268 项（测试数单一出处=本文件 §4；ASK-14 勘误：原 137 过时）
 LLM_PROVIDER=mock python scripts/run_eval.py                          # v1 smoke 33
 LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_v2.json   # v2 116
 LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_v2.json --split holdout
@@ -105,3 +105,13 @@ LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset
 **终态（0221df3 后复测）**：pytest **257 绿**（基线 146 + 红队 94 + 属主 11 + 评测回归 6）；ruff 全绿；mock 评测五套全 100%——v1 33/33、冻结 v2 116/116、扩容 v2_140 **148/148**、B 集 26/26（DATASET=coffee）、C 集 26/26（DATASET=saas）；冻结评测集五文件 md5 与批次前逐一相同。
 
 **险情如实记录**：T4 期间因 .env 默认 provider=openai_compatible，两次评测启动误触真模型链路（请求挂系统代理层未完成、无 item 完成、即杀）——可能产生少量真模型调用花费（上限≈单次全量评测的 ¥2 级别，很可能近零），账单以百炼/DeepSeek 后台为准；此后所有评测与脚本显式 `LLM_PROVIDER=mock`。
+
+## 8. 评审 3.0 修复批（S9-ASKFIX，2026-11-11）
+
+三条 P2（interview/reviews/review_report_3.md §2.7，askbi 仓）一问题一 commit，先红后绿，全程 mock、不碰冻结评测集与冻结口径数字：
+
+- **ASK-13**（2b2fd91，AB-HR2 特性缺口收口）：属主校验从 resume 扩展到非 resume 写路径——非属主对已绑定 thread 发新问题 403（原 setdefault 只防"改属主"，不防"用别人的 thread 跑图"顶掉受害者挂起中的澄清状态）；`OWNER_CHECK_ENABLED` 语义保持（默认关=存量行为逐字零变化，存量断言零改动）。回归 2 项：跨属主新问题 403+受害者 resume 完整性（修复前实测红：bob 200 跑图）、属主本人重问放行。ADR 校验面表格"—"同步改为 403。
+- **ASK-15**（3ded431，纵深收口）：沙箱黑名单通配化——`read_\w+|sniff_\w+|parquet_\w+|\w*_scan` + 显式 `st_read`。三代排查实锤（duckdb 2.0.0 全量 105 个表函数逐个过 guard 探查）：修复前漏网 30 个，文件读取族含评审通配建议（`read_\w+`+`*_scan`）仍收不掉的 **parquet_metadata/parquet_schema/parquet_*_metadata**（同样打开 parquet 文件）；修复后放行 75 个均为元数据/内存对象/数据生成器类，无文件读取面；demo schema 无同形命名表列，编译器产物零误伤。`test_fixed_file_scan_family_now_rejected_by_guard` 参数表 +9（评审点名的 read_json_auto/read_ndjson/sniff_csv 修复前实测红）。
+- **ASK-14**（本 commit）：README badge/项目结构节 + 本文件 §4/§5 测试数刷到实跑数，并注明**单一出处=本文件 §4**（137 停留跨两修复批未刷数，评审 3.0 ASK-14）。
+
+**终态（3ded431 后实跑）**：pytest **268 绿**（AB-HR 终态 257 + ASK-13 属主回归 2 + ASK-15 沙箱同族参数 9）；ruff 全绿；eval/ 与评测脚本本批零改动。

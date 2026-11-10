@@ -459,6 +459,14 @@ def test_deeplink_question_flows_through_esc():
     "parquet_scan", "iceberg_scan", "delta_scan",
     "postgres_scan", "mysql_scan", "sqlite_scan",
     "read_parquet",   # AB-HR3 补齐（read_csv 的直系兄弟，T3 收尾时发现同族漏词）
+    # ASK-15（评审 3.0）：*_scan 家族的同族兄弟——修复前 guard 层放行
+    # （只剩 enable_external_access=False 物理墙单层防御，违反自家双保险口径）
+    "read_json_auto", "read_ndjson", "sniff_csv",
+    # ASK-15 三代排查实锤（duckdb 2.0.0 全量 105 表函数过 guard 探查）：
+    # 通配化后仍需点名的同族——parquet_* 元数据族同样打开 parquet 文件，
+    # read_duckdb 读库文件，st_read 是 spatial 扩展的 GDAL 文件读取器
+    "parquet_metadata", "parquet_schema", "parquet_kv_metadata",
+    "read_duckdb", "read_single_parquet_file", "st_read",
 ])
 def test_fixed_file_scan_family_now_rejected_by_guard(fn):
     """红队真缺陷①：文件读取表函数家族曾不在黑名单，只剩物理墙单层防御——

@@ -24,8 +24,7 @@ from .schema import MASKED_FIELDS
 _FORBIDDEN = re.compile(
     r"\b(insert|update|delete|drop|alter|create|attach|detach|copy|export|import|"
     r"pragma|call|set|prepare|execute|vacuum|checkpoint|"
-    r"read_csv|read_csv_auto|read_text|read_blob|read_json|read_parquet|glob|install|load|"
-    r"parquet_scan|iceberg_scan|delta_scan|postgres_scan|mysql_scan|sqlite_scan)\b",
+    r"read_\w+|sniff_\w+|parquet_\w+|\w*_scan|st_read|glob|install|load)\b",
     re.IGNORECASE,
 )
 # ASK-1 修复：黑名单是黑名单，物理封禁才是城墙——连接层禁用外部访问后，
@@ -33,6 +32,19 @@ _FORBIDDEN = re.compile(
 # AB-HR1 红队发现（2026-11-09）：parquet_scan 文件读取家族不在黑名单——曾只剩
 # enable_external_access=False 单层防御（探查实锤：parquet_scan 穿过 guard 后
 # 由引擎 Permission Error 兜住），现补齐已知 *_scan 家族恢复双层纵深。
+# ASK-15（评审 3.0，2026-11-11）：*_scan 逐词枚举仍有同族漏网——黑名单通配化收口：
+#   read_\w+   → read_json_auto/read_ndjson/read_duckdb/read_json_objects*/read_single_* 等
+#                （duckdb 2.0.0 实测 105 个表函数全量过 guard：漏网 19 个全在此族）
+#   sniff_\w+  → sniff_csv（探查 guard 放行的 csv 探针函数）
+#   parquet_\w+ → parquet_metadata/parquet_schema/parquet_*_metadata/parquet_bloom_probe
+#                ——通配建议只提 *_scan 后缀，实测这批同样**打开 parquet 文件**，是
+#                第三代同族漏网（read_\w+|\w*_scan 收不掉它们）
+#   st_read    → spatial 扩展的 GDAL 文件读取器（本构建未装载、install/load 已禁，
+#                引擎墙双覆盖——名单内显式点名，防未来默认内置时静默穿 guard）
+# 通配后 guard 对沙箱内编译器产物零误伤：demo schema 无 read_*/sniff_*/parquet_*/
+# *_scan 命名的表或列（app/data 侧 grep 核对）。剩余放行的表函数均为元数据/内存
+# 对象/数据生成器类（duckdb_*、pragma_*、query/query_table——嵌套 SQL 仍受同一
+# 黑名单全文扫描约束、range/unnest 等），无文件读取面。
 _CONNECT_CONFIG = {"enable_external_access": False}
 _MAX_ROWS = 1000
 

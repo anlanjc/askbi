@@ -172,7 +172,9 @@ async def sql_agent_node(state: GraphState) -> dict:
     from ..data.metrics import metrics_prompt
 
     spec = get_spec(get_settings().dataset)
-    examples = get_example_store().search(state["question"], get_settings().rag_topk)
+    # 样例库按数据集隔离（S9-OPT2）：只检索本源 spec 标签的样例，
+    # coffee/saas 下不再召回电商 few-shot（跨源污染会把 DSL 形态带偏）
+    examples = get_example_store(spec.name).search(state["question"], get_settings().rag_topk)
     system = (
         "你是 NL2DSL 引擎：把业务问题转为查询 DSL（JSON）。只允许使用 schema 中的维度与"
         "指标字典中的指标 id，禁止编造。\n"

@@ -1,42 +1,401 @@
 [
   {
     "question": "上个月销售额是多少",
-    "dsl": {"intent": "aggregate", "metric": "revenue", "dimensions": [], "filters": [], "time": {"mode": "last_n_months", "n": 1}, "order_by": {"metric": "revenue", "direction": "desc"}, "limit": 5}
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "revenue",
+      "dimensions": [],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "revenue",
+        "direction": "desc"
+      },
+      "limit": 5
+    },
+    "spec": "ecommerce"
   },
   {
     "question": "最近3个月各品类销售额",
-    "dsl": {"intent": "breakdown", "metric": "revenue", "dimensions": ["category"], "filters": [], "time": {"mode": "last_n_months", "n": 3}, "order_by": {"metric": "revenue", "direction": "desc"}, "limit": 20}
+    "dsl": {
+      "intent": "breakdown",
+      "metric": "revenue",
+      "dimensions": [
+        "category"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 3
+      },
+      "order_by": {
+        "metric": "revenue",
+        "direction": "desc"
+      },
+      "limit": 20
+    },
+    "spec": "ecommerce"
   },
   {
     "question": "上月哪个品类毛利率最低",
-    "dsl": {"intent": "topn", "metric": "gross_margin_rate", "dimensions": ["category"], "filters": [], "time": {"mode": "last_n_months", "n": 1}, "order_by": {"metric": "gross_margin_rate", "direction": "asc"}, "limit": null}
+    "dsl": {
+      "intent": "topn",
+      "metric": "gross_margin_rate",
+      "dimensions": [
+        "category"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "gross_margin_rate",
+        "direction": "asc"
+      },
+      "limit": null
+    },
+    "spec": "ecommerce"
   },
   {
     "question": "近12个月销售额趋势",
-    "dsl": {"intent": "trend", "metric": "revenue", "dimensions": ["month"], "filters": [], "time": {"mode": "last_n_months", "n": 12}, "order_by": {"metric": "revenue", "direction": "desc"}, "limit": 12}
+    "dsl": {
+      "intent": "trend",
+      "metric": "revenue",
+      "dimensions": [
+        "month"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 12
+      },
+      "order_by": {
+        "metric": "revenue",
+        "direction": "desc"
+      },
+      "limit": 12
+    },
+    "spec": "ecommerce"
   },
   {
     "question": "华南地区上月订单量",
-    "dsl": {"intent": "aggregate", "metric": "order_count", "dimensions": [], "filters": [{"field": "region", "op": "=", "value": "华南"}], "time": {"mode": "last_n_months", "n": 1}, "order_by": {"metric": "order_count", "direction": "desc"}, "limit": 5}
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "order_count",
+      "dimensions": [],
+      "filters": [
+        {
+          "field": "region",
+          "op": "=",
+          "value": "华南"
+        }
+      ],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "order_count",
+        "direction": "desc"
+      },
+      "limit": 5
+    },
+    "spec": "ecommerce"
   },
   {
     "question": "各渠道最近6个月的客单价",
-    "dsl": {"intent": "breakdown", "metric": "avg_order_value", "dimensions": ["channel"], "filters": [], "time": {"mode": "last_n_months", "n": 6}, "order_by": {"metric": "avg_order_value", "direction": "desc"}, "limit": 10}
+    "dsl": {
+      "intent": "breakdown",
+      "metric": "avg_order_value",
+      "dimensions": [
+        "channel"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 6
+      },
+      "order_by": {
+        "metric": "avg_order_value",
+        "direction": "desc"
+      },
+      "limit": 10
+    },
+    "spec": "ecommerce"
   },
   {
     "question": "为什么上月毛利率下滑了",
-    "dsl": {"intent": "aggregate", "metric": "gross_margin_rate", "dimensions": [], "filters": [], "time": {"mode": "last_n_months", "n": 1}, "order_by": {"metric": "gross_margin_rate", "direction": "asc"}, "limit": 5}
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "gross_margin_rate",
+      "dimensions": [],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "gross_margin_rate",
+        "direction": "asc"
+      },
+      "limit": 5
+    },
+    "spec": "ecommerce"
   },
   {
     "question": "上月退货率最高的前5个子类",
-    "dsl": {"intent": "topn", "metric": "refund_rate", "dimensions": ["subcategory"], "filters": [], "time": {"mode": "last_n_months", "n": 1}, "order_by": {"metric": "refund_rate", "direction": "desc"}, "limit": 5}
+    "dsl": {
+      "intent": "topn",
+      "metric": "refund_rate",
+      "dimensions": [
+        "subcategory"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "refund_rate",
+        "direction": "desc"
+      },
+      "limit": 5
+    },
+    "spec": "ecommerce"
   },
   {
     "question": "美妆品类近6个月每月毛利额",
-    "dsl": {"intent": "trend", "metric": "gross_margin", "dimensions": ["month"], "filters": [{"field": "category", "op": "=", "value": "美妆"}], "time": {"mode": "last_n_months", "n": 6}, "order_by": {"metric": "gross_margin", "direction": "desc"}, "limit": 6}
+    "dsl": {
+      "intent": "trend",
+      "metric": "gross_margin",
+      "dimensions": [
+        "month"
+      ],
+      "filters": [
+        {
+          "field": "category",
+          "op": "=",
+          "value": "美妆"
+        }
+      ],
+      "time": {
+        "mode": "last_n_months",
+        "n": 6
+      },
+      "order_by": {
+        "metric": "gross_margin",
+        "direction": "desc"
+      },
+      "limit": 6
+    },
+    "spec": "ecommerce"
   },
   {
     "question": "各会员等级的购买客户数",
-    "dsl": {"intent": "breakdown", "metric": "customer_count", "dimensions": ["member_level"], "filters": [], "time": {"mode": "all"}, "order_by": {"metric": "customer_count", "direction": "desc"}, "limit": 10}
+    "dsl": {
+      "intent": "breakdown",
+      "metric": "customer_count",
+      "dimensions": [
+        "member_level"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "all"
+      },
+      "order_by": {
+        "metric": "customer_count",
+        "direction": "desc"
+      },
+      "limit": 10
+    },
+    "spec": "ecommerce"
+  },
+  {
+    "question": "上月外卖渠道的销售额",
+    "spec": "coffee",
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "revenue",
+      "dimensions": [],
+      "filters": [
+        {
+          "field": "channel",
+          "op": "=",
+          "value": "外卖"
+        }
+      ],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "revenue",
+        "direction": "desc"
+      },
+      "limit": 5
+    }
+  },
+  {
+    "question": "最近6个月各门店销售额",
+    "spec": "coffee",
+    "dsl": {
+      "intent": "breakdown",
+      "metric": "revenue",
+      "dimensions": [
+        "store"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 6
+      },
+      "order_by": {
+        "metric": "revenue",
+        "direction": "desc"
+      },
+      "limit": 10
+    }
+  },
+  {
+    "question": "烘焙品类上月毛利率是多少",
+    "spec": "coffee",
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "gross_margin_rate",
+      "dimensions": [],
+      "filters": [
+        {
+          "field": "category",
+          "op": "=",
+          "value": "烘焙"
+        }
+      ],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "gross_margin_rate",
+        "direction": "asc"
+      },
+      "limit": 5
+    }
+  },
+  {
+    "question": "近12个月消费会员数趋势",
+    "spec": "coffee",
+    "dsl": {
+      "intent": "trend",
+      "metric": "member_count",
+      "dimensions": [
+        "month"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 12
+      },
+      "order_by": {
+        "metric": "member_count",
+        "direction": "desc"
+      },
+      "limit": 12
+    }
+  },
+  {
+    "question": "上月旗舰版的MRR",
+    "spec": "saas",
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "mrr",
+      "dimensions": [],
+      "filters": [
+        {
+          "field": "tier",
+          "op": "=",
+          "value": "旗舰版"
+        }
+      ],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "mrr",
+        "direction": "desc"
+      },
+      "limit": 5
+    }
+  },
+  {
+    "question": "最近3个月各行业付费客户数",
+    "spec": "saas",
+    "dsl": {
+      "intent": "breakdown",
+      "metric": "company_count",
+      "dimensions": [
+        "industry"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 3
+      },
+      "order_by": {
+        "metric": "company_count",
+        "direction": "desc"
+      },
+      "limit": 10
+    }
+  },
+  {
+    "question": "代理渠道上月的毛利率",
+    "spec": "saas",
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "gross_margin_rate",
+      "dimensions": [],
+      "filters": [
+        {
+          "field": "channel",
+          "op": "=",
+          "value": "代理"
+        }
+      ],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "gross_margin_rate",
+        "direction": "asc"
+      },
+      "limit": 5
+    }
+  },
+  {
+    "question": "近12个月MRR趋势",
+    "spec": "saas",
+    "dsl": {
+      "intent": "trend",
+      "metric": "mrr",
+      "dimensions": [
+        "month"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 12
+      },
+      "order_by": {
+        "metric": "mrr",
+        "direction": "desc"
+      },
+      "limit": 12
+    }
   }
 ]

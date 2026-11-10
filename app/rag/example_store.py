@@ -4,6 +4,12 @@
 - 默认 TF-IDF 字符二元组：中文短问句检索效果够用、零模型下载、毫秒级、完全确定性；
 - chroma 后端可通过 RAG_BACKEND=chroma 启用（语义检索更强，但引入模型下载与非确定性）。
 这是"够用的最简方案优先"的一次显式取舍。
+
+样例按数据集隔离（S9-OPT2，AB-3 挂账）：seed 条目带 spec 标签（seed_examples.json
+的 "spec" 字段），get_example_store(dataset) 只装载同标签样例——coffee/saas 下
+检索不到电商样例、反之亦然，few-shot 不再把生成往别的业务域带偏。默认数据集
+（ecommerce）的样例库与改造前全局单库内容逐字节一致（同样 10 条、同算法同 IDF），
+检索行为零变化（tests/test_rag_isolation.py 金标 pin 守门）。
 """
 
 from __future__ import annotations
@@ -16,6 +22,10 @@ from pathlib import Path
 from ..config import get_settings
 
 SEED_PATH = Path(__file__).parent / "seed_examples.json"
+
+# seed 条目的 spec 标签字段；缺省视为 ecommerce（与打标签前的全局单库行为兼容）
+_SPEC_FIELD = "spec"
+_DEFAULT_SPEC_TAG = "ecommerce"
 
 
 def _bigrams(text: str) -> Counter:
@@ -80,14 +90,15 @@ class ChromaExampleStore(TfidfExampleStore):
     """可选向量后端：接口一致，内部用 chroma 默认嵌入。
 
     语义检索对长问句更稳，但首次运行需下载嵌入模型 —— 演示/CI 场景保持 tfidf。
+    collection 按数据集命名（askbi_examples_{dataset}），与 tfidf 路径同一隔离语义。
     """
 
-    def __init__(self):
+    def __init__(self, dataset: str = _DEFAULT_SPEC_TAG):
         super().__init__()
         import chromadb
 
         self._client = chromadb.Client()
-        self._col = self._client.get_or_create_collection("askbi_examples")
+        self._col = self._client.get_or_create_collection(f"askbi_examples_{dataset}")
 
     def add(self, question: str, dsl: dict) -> None:
         super().add(question, dsl)
@@ -106,17 +117,24 @@ class ChromaExampleStore(TfidfExampleStore):
         return out
 
 
-_STORE = None
+_STORES: dict[str, ExampleStore] = {}
 
 
-def get_example_store() -> ExampleStore:
-    global _STORE
-    if _STORE is not None:
-        return _STORE
+def get_example_store(dataset: str | None = None) -> ExampleStore:
+    """按数据集取样例库；None = settings.dataset（与 get_spec 同一约定）。
+
+    各数据集的库只装载 seed 中带同 spec 标签的样例（缺省标签 = ecommerce）——
+    跨源 few-shot 污染在库层隔离（S9-OPT2）。按 key 缓存：同数据集重复调用
+    返回同一实例，ecommerce 库与改造前全局单库装载内容逐字节一致。
+    """
+    key = dataset if dataset is not None else get_settings().dataset
+    if key in _STORES:
+        return _STORES[key]
     backend = get_settings().rag_backend
-    store: ExampleStore = ChromaExampleStore() if backend == "chroma" else TfidfExampleStore()
+    store: ExampleStore = ChromaExampleStore(key) if backend == "chroma" else TfidfExampleStore()
     if SEED_PATH.exists():
         for item in json.loads(SEED_PATH.read_text(encoding="utf-8")):
-            store.add(item["question"], item["dsl"])
-    _STORE = store
+            if item.get(_SPEC_FIELD, _DEFAULT_SPEC_TAG) == key:
+                store.add(item["question"], item["dsl"])
+    _STORES[key] = store
     return store

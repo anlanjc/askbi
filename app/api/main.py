@@ -7,6 +7,7 @@ import hmac
 import json
 import time
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
@@ -27,7 +28,17 @@ from ..export import answer_to_csv, export_filename
 from .schemas import AdminConfigRequest, AskRequest, FeedbackRequest
 from .task_store import get_task_store
 
-app = FastAPI(title="AskBI 问数引擎", version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """关停钩子（ASKBI-2，评审 4.0）：释放 LLM 客户端连接池（曾从不关闭靠 GC 兜底）。"""
+    yield
+    from ..llm.factory import close_all_llm_clients
+
+    await close_all_llm_clients()
+
+
+app = FastAPI(title="AskBI 问数引擎", version="0.1.0", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]

@@ -181,7 +181,9 @@ tests/          # 268 项测试（实跑口径，单一出处=EVIDENCE.md §4）
 
 ## 查询缓存回放（E4③ 原创，默认关闭）
 
-同 DSL 指纹的重复查询直接回放结果集：缓存键 = 规范化 DSL 的 SHA256（维度/过滤/时间归一，role 参与指纹防跨角色复用），失效 = TTL(300s) + 数据版本号双闸。`CACHE_ENABLED=1` 开启（默认关闭，关闭时行为与无缓存完全一致）；`stats()` 暴露命中率。正确性已验证：开/关缓存全量评测 33/33 逐条一致（`python scripts/eval_cache.py`）；诚实记录：唯一查询的评测集上零命中（82→105ms），收益在生产高重复查询流量——设计决策全文见 `docs/cache_adr.md`，13 项缓存测试在 `tests/test_cache.py`。
+同 DSL 指纹的重复查询直接回放结果集：缓存键 = 规范化 DSL 的 SHA256（维度/过滤/时间归一，role 参与指纹防跨角色复用），失效 = TTL(300s) + 数据版本号双闸。`CACHE_ENABLED=1` 开启（默认关闭，关闭时行为与无缓存完全一致）；`stats()` 暴露命中率与单飞计数。正确性已验证：开/关缓存全量评测 33/33 逐条一致（`python scripts/eval_cache.py`）；诚实记录：唯一查询的评测集上零命中（82→105ms），收益在生产高重复查询流量——设计决策全文见 `docs/cache_adr.md`，25 项缓存测试在 `tests/test_cache.py`。
+
+并发击穿防护（singleflight）：高并发下同一查询同时到达时，未命中瞬间 N 路请求会重复执行 N 次沙箱查询——`claim_flight/publish_flight/fail_flight` 三原语让同 key 只放一个 leader 执行（执行仍在事件循环原位，Sandbox 超时 interrupt 语义不迁移），等待者共享 leader 结果并计 `singleflight_coalesced`；等待上界 `CACHE_FLIGHT_WAIT_SECONDS`（默认 5s）内 leader 未出结果则等待者 fail-open 自行执行——单飞是优化，绝不成为可用性风险。e2e 回归：mock 全图两路并发同问，沙箱只执行一次、第二路共享结果并带 `cache_hit(shared=true)` 事件。
 
 ## 多轮指代消解（E 系原创，默认关闭）
 

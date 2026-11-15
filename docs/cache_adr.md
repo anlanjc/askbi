@@ -1,6 +1,6 @@
 # ADR：查询缓存回放与失效策略（E4③）
 
-> 状态：已实现（2026-10-27）｜实现：app/cache.py + tests/test_cache.py（18 项）+ scripts/eval_cache.py
+> 状态：已实现（2026-10-27；§8 单飞 2026-11-16 增补）｜实现：app/cache.py + tests/test_cache.py（25 项）+ scripts/eval_cache.py
 > 全量测试 57 项全绿（44 既有 + 13 新增）；缓存正确性评测 PASS（33/33 逐条一致）
 
 ## 1. 我为什么做缓存
@@ -47,3 +47,29 @@ BI 场景的查询重复率极高——"上月销售额"这类问法每天被问
 - 版本指纹是启发式（内容碰撞理论上可能）——TTL 是兜底，但如果未来数据量大到 COUNT(*) 变慢，版本计算本身会成为每查询的固定开销，要改成写入时维护版本表。
 - 跨进程不共享（进程内缓存）——多 worker 部署（uvicorn --workers N）时各 worker 独立缓存，命中率被除以 N；要跨进程就换 SQLite 方案（备选 2）。
 - 空结果也缓存（避免缓存穿透重复查询空集）——但错误结果**不**缓存，SQL 失败走修复重试路径，与缓存无关。
+
+## 8. singleflight 并发击穿防护（AB 车道 2026-11-16 增补）
+
+### 8.1 缺口
+
+三闸解决的是"结果过期"，没解决"并发未命中"：高并发下同一查询（同 DSL 指纹 + role + 数据集）同时到达，N 路请求全部 get miss，各自完整跑一遍沙箱执行 + cache.set——压测语境里这正是缓存要挡掉的重复负载反而在最热的 key 上放大 N 倍（缓存穿透的经典"击穿"形态；空结果也缓存的语义同样挡不住这个窗口）。
+
+### 8.2 方案与被否方案
+
+| 方案 | 结论 | 原因 |
+|---|---|---|
+| claim/publish/fail 三原语（✅ 采用） | QueryCache 只做在飞登记与结果分发，执行方留在事件循环原位 | 见下 |
+| get_or_load(key, loader) 一体化 | ❌ 放弃 | loader 需在线程内同步执行，Sandbox.execute 的超时保护是 asyncio.wait_for + con.interrupt()（跨线程打断）——把执行搬进 to_thread 的 loader 等于丢掉 SQL 超时语义，或再造一套线程版 interrupt，得不偿失 |
+| asyncio 原语（asyncio.Event/锁） | ❌ 放弃 | QueryCache 是同步 API（脚本/评测/单测都在线程语境用），混入事件循环原语会撕裂接口；threading.Event 在 to_thread 里等待即可，不占事件循环 |
+
+### 8.3 三原语契约（app/cache.py）
+
+- `claim_flight(key)`：快路径 get 命中 → ("hit", result)；登记在飞成为 leader → ("leader", None)；有在飞 → 挂起等待 → ("flight", result)（计 singleflight_coalesced）；等待超上界（`cache_flight_wait_seconds`，默认 5s）→ ("miss", None)（计 singleflight_timeouts）——调用方 fail-open 自行执行，**单飞是优化，绝不成为可用性风险**。
+- `publish_flight(key, result)`：leader 执行成功后发布——先挂结果唤醒等待者（等待者读 flight.result，连数据版本探测都省掉），再写缓存、拆 flight；set 失败也保证 flight 必拆（try/finally），不留永久在飞记录。
+- `fail_flight(key)`：leader 执行失败拆 flight 唤醒等待者——等待者循环重新竞选，恰一名接棒 leader 重试执行，执行责任不丢。
+
+executor 接线（nodes.py）：leader/超时方执行成功 → publish_flight；执行失败且是 leader → fail_flight。等待者失败不会误挂：超时方误 publish/fail 到原 leader 的 flight 时，结果等价、flight 最终仍被拆除，代价是多跑一次（有界，fail-open 语义）。
+
+### 8.4 禁用态与多 worker
+
+禁用态 claim 恒 ("leader", None)、不起 flight、不计数——与无缓存行为逐字一致（CACHE_ENABLED 默认 False 的零漂移原则不变）。多 worker（uvicorn --workers N）下单飞是进程内的，跨 worker 各自独立在飞——与 §7 跨进程边界同一条缝，属 PRODUCTION_GAP 高可用项。

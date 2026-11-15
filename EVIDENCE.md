@@ -115,3 +115,13 @@ LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset
 - **ASK-14**（本 commit）：README badge/项目结构节 + 本文件 §4/§5 测试数刷到实跑数，并注明**单一出处=本文件 §4**（137 停留跨两修复批未刷数，评审 3.0 ASK-14）。
 
 **终态（3ded431 后实跑）**：pytest **268 绿**（AB-HR 终态 257 + ASK-13 属主回归 2 + ASK-15 沙箱同族参数 9）；ruff 全绿；eval/ 与评测脚本本批零改动。
+
+## 9. 查询单飞批（AB 车道，2026-11-16）
+
+任务卡（1B3-AB 车道，独占 askbi）候选定案：①"缓存并发击穿防护（singleflight）"采纳；②"审计日志查询端点"实读发现**已存在**（`GET /api/admin/audit`，app/api/main.py + AuditLog.list，T2 已落地）→ 按卡换项不重复做。
+
+- **singleflight 三原语**（app/cache.py：`claim_flight/publish_flight/fail_flight`）：同 key 并发未命中只放一个 leader 执行，等待者共享 leader 结果（计 `singleflight_coalesced`）；等待上界 `cache_flight_wait_seconds`（默认 5s，config.py 新增字段）超时 fail-open 自行执行（计 `singleflight_timeouts`）——**单飞是优化，绝不成为可用性风险**；leader 执行失败 `fail_flight` 拆 flight 唤醒等待者重新竞选接棒，执行责任不丢。设计全文 docs/cache_adr.md §8（含被否方案：get_or_load 一体化会丢 Sandbox 超时 interrupt 语义；asyncio 原语会撕裂同步 API）。
+- **executor 接线**（app/agents/nodes.py）：快慢路径 claim 都走 to_thread，执行留在事件循环原位（Sandbox 超时 interrupt 语义不迁移）；leader 成功 publish/失败 fail；`cache_hit` 事件 data 新增 `shared` 标记单飞共享（SSE 契约只加字段不加类型，前端零改动）。禁用态 claim 恒 leader、不起 flight、不计数——CACHE_ENABLED 默认关的零漂移原则不变。
+- **回归 7 项**（tests/test_cache.py 18→25，TDD 先红后绿）：单测 6（leader 竞选+等待者共享、超时 fail-open、失败重竞选恰一名接棒、快路径命中、禁用态零 flight、等待上界默认取自 settings）+ e2e 1（mock 全图两路并发同问：修复前实测红 calls==2 两路都执行沙箱；修复后沙箱只执行一次、第二路 from_cache=true + cache_hit(shared=true)）。
+
+**终态（本批提交实跑）**：pytest **289 绿**（HEAD 实收 282 + 本批 7；§4 的 268 为陈旧口径漂移，ASKBI-5 清账收口）；ruff 全绿；mock 评测五套 100%——v1 33/33、v2 116/116、v2_140 **148/148**、B 集 26/26（DATASET=coffee）、C 集 26/26（DATASET=saas）；冻结评测集 md5 批前后逐一相同。

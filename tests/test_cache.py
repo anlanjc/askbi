@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
+import time
 
 from app.agents.graph import run_ask
 from app.cache import (
@@ -329,3 +331,191 @@ def test_version_probe_memoized_within_window():
     now["t"] += 31.0            # 窗口外 → 重新探测一次
     assert c.get("k") is not None
     assert calls["n"] == first + 1
+
+
+# ---------------- 6. singleflight（并发击穿防护：同 key 在飞只放一个执行） ----------------
+
+_SF_RESULT = {"columns": ["value"], "rows": [[42]], "row_count": 1, "truncated": False, "elapsed_ms": 1.0}
+
+
+def _poll(pred, timeout: float = 5.0) -> bool:
+    """轮询等待条件成立（线程测试的确定性护栏）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+async def _apoll(pred, timeout: float = 5.0) -> bool:
+    """异步轮询等待条件成立（事件循环测试用）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        await asyncio.sleep(0.01)
+    return False
+
+
+def test_singleflight_leader_claims_and_waiters_share():
+    """同 key 并发：首个调用方成为 leader，其余等待者在 publish 后共享结果（不重复执行）。"""
+    c = _make_cache()
+    assert c.claim_flight("k") == ("leader", None)   # 主线程成为 leader
+
+    outs: dict[int, tuple] = {}
+
+    def waiter(i: int) -> None:
+        outs[i] = c.claim_flight("k")
+
+    threads = [threading.Thread(target=waiter, args=(i,)) for i in range(3)]
+    for t in threads:
+        t.start()
+    time.sleep(0.1)
+    assert len(outs) == 0, "等待者应在 leader 完成前挂起等待而非提前返回"
+
+    c.publish_flight("k", dict(_SF_RESULT))   # leader 完成：写缓存 + 唤醒等待者
+    for t in threads:
+        t.join(timeout=5)
+    assert all(not t.is_alive() for t in threads)
+    for i in range(3):
+        src, res = outs[i]
+        assert src == "flight" and res == _SF_RESULT
+    st = c.stats()
+    assert st["singleflight_coalesced"] == 3 and st["singleflight_timeouts"] == 0
+    assert st["stores"] == 1
+    assert c.get("k") == _SF_RESULT          # 后续请求走常规命中
+
+
+def test_singleflight_waiter_timeout_fails_open():
+    """等待超时 → fail-open 返回 ("miss", None)（调用方自行执行，与无单飞行为一致）；超时计数。"""
+    c = _make_cache(flight_wait_seconds=0.05)
+    assert c.claim_flight("k") == ("leader", None)
+
+    out: dict[str, tuple] = {}
+
+    def waiter() -> None:
+        out["w"] = c.claim_flight("k")
+
+    t = threading.Thread(target=waiter)
+    t.start()
+    t.join(timeout=5)
+    src, res = out["w"]
+    assert src == "miss" and res is None
+    assert c.stats()["singleflight_timeouts"] == 1
+
+    # fail-open 方自行执行后 publish：leader 仍在飞也不挂起；leader 事后 publish 只纯写缓存
+    c.publish_flight("k", dict(_SF_RESULT))
+    assert c.get("k") == _SF_RESULT
+    c.publish_flight("k", dict(_SF_RESULT))
+    assert c.get("k") == _SF_RESULT
+
+
+def test_singleflight_leader_failure_wakes_waiters_to_relead():
+    """leader 执行失败 fail_flight：等待者被唤醒重新竞选，恰一名接棒 leader，其余共享新结果。"""
+    c = _make_cache()
+    assert c.claim_flight("k") == ("leader", None)
+
+    outs: dict[str, tuple] = {}
+
+    def runner(tag: str) -> None:
+        outs[tag] = c.claim_flight("k")
+
+    threads = [threading.Thread(target=runner, args=(f"w{i}",)) for i in range(3)]
+    for t in threads:
+        t.start()
+    time.sleep(0.1)
+    assert len(outs) == 0, "等待者应已挂起在 flight 上"
+
+    c.fail_flight("k")          # leader 失败：拆 flight 唤醒等待者
+    assert _poll(lambda: any(o[0] == "leader" for o in outs.values())), \
+        "失败唤醒后必须有等待者接棒 leader"
+    time.sleep(0.05)            # 给其余等待者时间挂到新 flight 上
+    c.publish_flight("k", dict(_SF_RESULT))
+    for t in threads:
+        t.join(timeout=5)
+    assert all(not t.is_alive() for t in threads)
+    assert len(outs) == 3
+    leaders = [k for k, o in outs.items() if o[0] == "leader"]
+    assert len(leaders) == 1, f"恰一名接棒 leader，实得 {leaders}"
+    flights = {k: o for k, o in outs.items() if o[0] == "flight"}
+    assert len(flights) == 2
+    for _src, res in flights.values():
+        assert res == _SF_RESULT
+    assert c.stats()["singleflight_coalesced"] == 2
+
+
+def test_singleflight_fast_path_hit():
+    """已有缓存条目：claim 直接命中回放，不起 flight。"""
+    c = _make_cache()
+    c.set("k", dict(_SF_RESULT))
+    src, res = c.claim_flight("k")
+    assert src == "hit" and res == _SF_RESULT
+    st = c.stats()
+    assert st["hits"] == 1 and st["singleflight_coalesced"] == 0 and st["singleflight_timeouts"] == 0
+
+
+def test_singleflight_disabled_cache_no_flight():
+    """禁用态：claim 直取执行权、不起 flight，publish 为 no-op——与无缓存行为一致、计数为零。"""
+    c = _make_cache(enabled=False)
+    assert c.claim_flight("k") == ("leader", None)
+    c.publish_flight("k", dict(_SF_RESULT))
+    st = c.stats()
+    assert st["enabled"] is False and st["stores"] == 0 and st["singleflight_coalesced"] == 0
+    assert c.get("k") is None
+
+
+def test_flight_wait_seconds_defaults_from_settings():
+    """等待上界默认来自 settings.cache_flight_wait_seconds，构造参数显式覆盖优先。"""
+    import app.cache as cache_mod
+
+    c = cache_mod.QueryCache(version_provider=lambda: "v1", enabled=True, version_ttl_seconds=0.0)
+    assert c._flight_wait == get_settings().cache_flight_wait_seconds
+    c2 = cache_mod.QueryCache(version_provider=lambda: "v1", enabled=True,
+                              version_ttl_seconds=0.0, flight_wait_seconds=0.01)
+    assert c2._flight_wait == 0.01
+
+
+async def test_executor_singleflight_coalesces_concurrent_same_question(db_path):
+    """端到端（mock 全图）：开缓存下两路并发同问 → 沙箱只执行一次，第二路共享结果并标记 from_cache。"""
+    import asyncio
+
+    import app.data.sandbox as sandbox_mod
+
+    s = get_settings()
+    reset_query_cache()
+    s.cache_enabled = True
+
+    gate = threading.Event()
+    calls = {"n": 0}
+    orig_execute = sandbox_mod.Sandbox.execute
+
+    async def counting_execute(self, sql: str):
+        calls["n"] += 1
+        await asyncio.to_thread(gate.wait, 10.0)
+        return await orig_execute(self, sql)
+
+    sandbox_mod.Sandbox.execute = counting_execute
+    try:
+        q = "上个月的销售额是多少"
+        t1 = asyncio.create_task(run_ask(q))
+        assert await _apoll(lambda: calls["n"] == 1), "leader 应已进入沙箱执行"
+        t2 = asyncio.create_task(run_ask(q))
+        assert await _apoll(lambda: get_query_cache().stats()["misses"] >= 2), \
+            "第二路应已到达 claim（miss 计数）"
+        assert calls["n"] == 1, "等待者不得重复执行沙箱（击穿防护）"
+        gate.set()
+        s1 = await t1
+        s2 = await t2
+        assert s2["result"]["from_cache"] is True
+        assert s2["result"]["rows"] == s1["result"]["rows"]
+        st = get_query_cache().stats()
+        assert st["singleflight_coalesced"] == 1 and st["singleflight_timeouts"] == 0
+        hit_events = [e for e in s2["events"]
+                      if e["node"] == "executor" and e["type"] == "cache_hit"]
+        assert hit_events and hit_events[0]["data"].get("shared") is True
+    finally:
+        sandbox_mod.Sandbox.execute = orig_execute
+        gate.set()
+        s.cache_enabled = False
+        reset_query_cache()

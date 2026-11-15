@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     clarify_suspend_enabled: bool = False  # E4②：澄清挂起/恢复（checkpointer interrupt），默认关闭
     cache_ttl_seconds: int = 300
     cache_max_entries: int = 256
+    # singleflight 等待上界（AB 车道）：同 key 在飞时等待者最多等这么久，超时 fail-open 自行执行
+    cache_flight_wait_seconds: float = 5.0
 
     # 服务
     api_key: str = ""

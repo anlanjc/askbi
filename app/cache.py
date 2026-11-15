@@ -9,8 +9,11 @@
    - TTL：限定一切"漏失效"的最大错误窗口（默认 300s，可配）；
    - 数据版本号：读时计算 duckdb 数据集指纹（行数 / 最大日期 / 事实表行数），
      变化即全量失效——数据重生成不必等 TTL 到期。
-3. 计数器 + stats()：命中/未命中/TTL 过期/版本失效/写入/淘汰，线程安全（RLock）。
+3. 计数器 + stats()：命中/未命中/TTL 过期/版本失效/写入/淘汰 + 单飞合并/超时，线程安全（RLock）。
 4. cache_enabled 默认 False：关闭时 get/set 直通，执行路径与无缓存时完全一致。
+5. singleflight 并发击穿防护（AB 车道）：同 key 并发未命中只放一个 leader 执行
+   （claim/publish/fail 三原语，执行方保持在事件循环原位——Sandbox 超时 interrupt 语义不迁移）；
+   等待者共享 leader 结果；等待超时 fail-open 自行执行，绝不因单飞丢可用性。
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import duckdb
@@ -170,6 +173,14 @@ class _Entry:
     version: str
 
 
+@dataclass
+class _Flight:
+    """单飞在飞记录：leader 执行期间同 key 的其他调用方挂在此事件上共享结果。"""
+
+    event: threading.Event = field(default_factory=threading.Event)
+    result: dict | None = None   # leader 成功后回填；None=失败/被拆除（等待者重新竞选）
+
+
 class QueryCache:
     """进程内查询缓存（OrderedDict 近似 LRU + TTL + 版本双闸），线程安全。"""
 
@@ -183,6 +194,7 @@ class QueryCache:
         clock: Callable[[], float] = time.time,
         version_clock: Callable[[], float] = time.monotonic,
         version_ttl_seconds: float | None = None,
+        flight_wait_seconds: float | None = None,
         spec: DatasetSpec | None = None,
     ):
         s = get_settings()
@@ -201,9 +213,17 @@ class QueryCache:
         self._version_memo: tuple[str, float] | None = None
         self._lock = threading.RLock()
         self._entries: OrderedDict[str, _Entry] = OrderedDict()
+        # singleflight（并发击穿防护）：同 key 在飞只放一个 leader 执行，等待者共享结果。
+        # 等待上界兜底 leader 挂死/极慢：超时 fail-open 自行执行，单飞只是优化不是可用性风险。
+        self._flight_wait = (
+            s.cache_flight_wait_seconds if flight_wait_seconds is None else flight_wait_seconds
+        )
+        self._flight_lock = threading.Lock()
+        self._flights: dict[str, _Flight] = {}
         self._counters = {
             "hits": 0, "misses": 0, "ttl_expired": 0,
             "version_invalidations": 0, "stores": 0, "evictions": 0,
+            "singleflight_coalesced": 0, "singleflight_timeouts": 0,
         }
 
     # ---- 开关：调用时读 settings，测试/评测可在运行期翻转 ----
@@ -265,6 +285,74 @@ class QueryCache:
             while len(self._entries) > self.max_entries:
                 self._entries.popitem(last=False)
                 self._counters["evictions"] += 1
+
+    # ---- singleflight（并发击穿防护，AB 车道）：claim/publish/fail 三原语 ----
+    # 执行方（executor_node）留在事件循环原位执行——Sandbox 的超时 interrupt 语义不迁移；
+    # 缓存只做在飞登记与结果分发。等待超时 fail-open：单飞是优化，绝不成为可用性风险。
+
+    def claim_flight(self, key: str, timeout: float | None = None) -> tuple[str, dict | None]:
+        """单飞认领：同 key 并发未命中只放一个 leader 执行。
+
+        返回 (outcome, shared_result)：
+        - ("hit", result)   快路径命中，直接回放（与 get() 同语义同计数）；
+        - ("leader", None)  取得执行权——调用方执行后必须 publish_flight / fail_flight 二选一收尾；
+        - ("flight", result) 等待者共享 leader 结果（计 singleflight_coalesced）；
+        - ("miss", None)    等待超时 fail-open（计 singleflight_timeouts）——调用方自行执行，
+                            结束后仍应 publish_flight（flight 已不在时为纯写缓存）。
+        禁用态恒 ("leader", None) 且不起 flight、不计数——与无缓存行为一致。
+        """
+        hit = self.get(key)
+        if hit is not None:
+            return "hit", hit
+        if not self.enabled:
+            return "leader", None
+        limit = self._flight_wait if timeout is None else timeout
+        deadline = time.monotonic() + limit
+        while True:
+            with self._flight_lock:
+                flight = self._flights.get(key)
+                if flight is None:
+                    self._flights[key] = _Flight()
+                    return "leader", None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not flight.event.wait(remaining):
+                with self._lock:
+                    self._counters["singleflight_timeouts"] += 1
+                return "miss", None
+            if flight.result is not None:
+                with self._lock:
+                    self._counters["singleflight_coalesced"] += 1
+                return "flight", dict(flight.result)
+            # leader 失败拆 flight（result=None）→ 循环重新竞选，执行责任不丢
+
+    def publish_flight(self, key: str, result: dict) -> None:
+        """leader 执行成功后发布：结果挂上 flight 唤醒等待者，再写缓存、拆 flight。
+
+        先分发后写缓存再拆除：等待者读 flight.result 不再探测数据版本；
+        self.set 失败也保证 flight 必被拆除（try/finally），不留永久在飞记录。
+        """
+        with self._flight_lock:
+            flight = self._flights.get(key)
+            if flight is not None:
+                flight.result = result
+                flight.event.set()
+        try:
+            self.set(key, result)
+        finally:
+            with self._flight_lock:
+                if flight is not None and self._flights.get(key) is flight:
+                    del self._flights[key]
+
+    def fail_flight(self, key: str) -> None:
+        """leader 执行失败：拆 flight 并唤醒等待者（result=None → 等待者重新竞选接棒）。
+
+        fail-open 超时方误调时可能拆到原 leader 的 flight——原 leader 之后 publish 为纯写缓存，
+        等待者重新竞选多跑一次，代价有界（fail-open 语义，诚实记录）。
+        """
+        with self._flight_lock:
+            flight = self._flights.pop(key, None)
+        if flight is not None:
+            flight.event.set()
 
     def stats(self) -> dict:
         with self._lock:

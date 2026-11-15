@@ -41,7 +41,7 @@
 | 压测（进程内） | 12 点位矩阵 | 编排上限 110-124 QPS；300ms 模拟延迟下 P50≈1.2s≈4×LLM（10-28 存档，11-05 同日复测 ±4% 内复现） | evidence/load_test.md |
 | **压测（HTTP 全栈双口径）** | 22 点位（进程内 vs uvicorn 真进程 SSE 全链，11-05） | c=1 差值法附加开销 **5.1ms**（框架地板 3.9ms + SSE 净附加 ≈1.2ms）；delay=300ms 下 HTTP≈进程内 **0.92~0.97×**（瓶颈=LLM 串行调用，框架被摊薄）；delay=0 高并发 0.53× 系**共址 CPU 争抢伪影**（诚实标注）；缓存收益随瓶颈位置变化（c=1 +36% / 高并发 +3~4%） | evidence/load_test_http.md |
 
-pytest：**268 项全绿**（11-11 实测；**测试数单一出处=本行**，README badge/项目结构节与这里同步刷新。ASK-14 勘误（评审 3.0）：此数曾停在 137，连续两批修复未刷数——现改为实跑滚动口径，各批次终态留档见 §7/§8。最新增量 = 评审 3.0 批：ASK-13 属主回归 2 项 + ASK-15 沙箱同族参数 9 项）。金标生成：`scripts/build_dataset_v2.py` / `scripts/build_dataset_b.py` / `scripts/build_dataset_c.py`（可重建/自检）。
+pytest：**307 项全绿**（11-16 实测；**测试数单一出处=本行**，README badge/项目结构节与这里同步刷新。ASK-14 勘误（评审 3.0）：此数曾停在 137/268，连续批次修复未刷数——现改为实跑滚动口径，各批次终态留档见 §7/§8/§9。最新增量 = S9-OPT2 两文件 +14（曾未刷数，本行一并清账）+ AB 车道查询单飞批 +7 + 评审 4.0 批回归 +18（ASKBI-1/2/3/4/6 各一问题一批：3+8+2+2+3，tests/test_llm_client.py 等四件新建）。历史快照（137/268）保留在对应批次终态行不回写。金标生成：`scripts/build_dataset_v2.py` / `scripts/build_dataset_b.py` / `scripts/build_dataset_c.py`（可重建/自检）。
 
 ## 5. 复现命令
 
@@ -51,7 +51,7 @@ pip install -r requirements.txt
 python scripts/gen_data.py                 # 种子 42，确定性重建 DuckDB
 
 # 测试与评测
-python -m pytest -q                        # 268 项（测试数单一出处=本文件 §4；ASK-14 勘误：原 137 过时）
+python -m pytest -q                        # 307 项（测试数单一出处=本文件 §4）
 LLM_PROVIDER=mock python scripts/run_eval.py                          # v1 smoke 33
 LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_v2.json   # v2 116
 LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_v2.json --split holdout

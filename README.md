@@ -3,7 +3,7 @@
 > 对标腾讯云 ChatBI / 阿里瓴羊智能小Q 的多 Agent 对话式经营分析系统
 > **NL2DSL2SQL 受控查询 · 数值确定性 · 合规质检闭环 · 可判对错的评测**
 
-[![CI](https://github.com/anlanjc/askbi/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/askbi/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-268%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
+[![CI](https://github.com/anlanjc/askbi/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/askbi/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-307%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
 
 ## 架构总览
 
@@ -164,7 +164,7 @@ app/
 ├── api/        # FastAPI：SSE 流式 / 任务回放 / token 看板 / 管理面(审计+配置+清除) / 静态托管
 └── eval/       # 评测 runner + 消融
 web/index.html  # 问数工作台（原生JS，无构建）
-tests/          # 268 项测试（实跑口径，单一出处=EVIDENCE.md §4）：守卫/编译/解析/端到端/API/QA/缓存/消解/注册表(三源)/导出/审计/属主隔离/红队攻击面
+tests/          # 307 项测试（实跑口径，单一出处=EVIDENCE.md §4）：守卫/编译/解析/端到端/API/QA/缓存/消解/注册表(三源)/导出/审计/属主隔离/红队攻击面
 ```
 
 ## 文档
@@ -187,7 +187,7 @@ tests/          # 268 项测试（实跑口径，单一出处=EVIDENCE.md §4）
 
 ## 多轮指代消解（E 系原创，默认关闭）
 
-"上月华南毛利率"之后问"那华北呢"——自动继承上轮查询骨架并替换同维度实体（`FOLLOWUP_ENABLED=1` + 请求带 `session_id` 开启）。追问判定保守（判不出当独立问题走澄清），实体归一两层（语气词剥离+通用后缀剥离），替换全程事件可追溯。10 项测试（全量 67 绿）；设计决策与误判方向论证见 `docs/followup_adr.md`。
+"上月华南毛利率"之后问"那华北呢"——自动继承上轮查询骨架并替换同维度实体（`FOLLOWUP_ENABLED=1` + 请求带 `session_id` 开启）。追问判定保守（判不出当独立问题走澄清），实体归一两层（语气词剥离+通用后缀剥离），替换全程事件可追溯。15 项测试；设计决策与误判方向论证见 `docs/followup_adr.md`。
 
 ## 澄清挂起/恢复（E4② 原创，默认关闭）
 

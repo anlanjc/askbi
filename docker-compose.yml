@@ -4,9 +4,17 @@ services:
     ports:
       - "8000:8000"
     environment:
+      # ASKBI-3（评审 4.0）：白名单曾漏 PROFILE 与 OPENAI 三件套（同族 DEEPSEEK_BASE_URL），
+      # 镜像又无 .env → 文档清单里的部署配置被静默丢弃（PROFILE=full 不开、真模型凭据收不到）。
+      # 白名单与 DEPLOY.md「环境变量清单」逐一对齐，回归见 tests/test_deploy_config.py。
       - LLM_PROVIDER=${LLM_PROVIDER:-mock}
+      - PROFILE=${PROFILE:-conservative}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-}
       - API_KEY=${API_KEY:-}
       - ROLE=${ROLE:-boss}
     volumes:

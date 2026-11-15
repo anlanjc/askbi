@@ -58,9 +58,17 @@ class TaskStore:
                 continue
             try:
                 t = json.loads(line)
+                # ASKBI-1（评审 4.0）：JSONL 里滞留的 running 条目在载入时即标终态——
+                # 重启后不可能还有在跑的 SSE（进程都死了），历史僵尸必须可被淘汰，
+                # 否则把 ASK-9 的 200 上限永久顶满（载入不淘汰曾使其不可回收）。
+                # 内存态标记；JSONL 追加日志保持原样可回放。
+                if t.get("status") == "running":
+                    t.update(status="done", kind="aborted",
+                             answer={"kind": "aborted", "message": "服务重启，任务中断"})
                 self._tasks[t["id"]] = t
             except Exception:  # noqa: BLE001, S112  # 损坏行跳过（追加日志的有意容错）
                 continue
+        self._evict_if_over()   # ASKBI-1：载入同样受 200 上限约束（淘汰此前只在 create 触发）
 
     def create(self, question: str, role: str, owner: str | None = None) -> dict:
         t = {
@@ -114,6 +122,31 @@ class TaskStore:
                 elapsed_ms=round(elapsed_ms, 1),
             )
         self._append(t)
+
+    def finish_if_running(
+        self, task_id: str, answer: dict, usage: dict, events: list, elapsed_ms: float
+    ) -> bool:
+        """终态兜底（ASKBI-1，评审 4.0）：任务仍 running 才落终态并落盘。
+
+        与 finish 的差别：已终态（正常/error/clarify_pending）→ no-op 返回 False。
+        供 SSE 生成器的 finally 兜底使用——客户端断连（GeneratorExit）/请求取消
+        （CancelledError，均 BaseException，except Exception 接不住）走这里落
+        kind=aborted，任务不再永久滞留 running 绕过内存上限。
+        """
+        with self._lock:
+            t = self._tasks.get(task_id)
+            if t is None or t.get("status") != "running":
+                return False
+            t.update(
+                status="done",
+                kind=(answer or {}).get("kind"),
+                answer=answer,
+                usage=usage,
+                events=events,
+                elapsed_ms=round(elapsed_ms, 1),
+            )
+        self._append(t)
+        return True
 
     def set_feedback(self, task_id: str, value: str, comment: str = "") -> dict | None:
         """thumbs 反馈：附着到任务并随任务一起追加落盘（重启可回放）。"""

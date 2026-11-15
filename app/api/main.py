@@ -120,25 +120,13 @@ async def ask(body: AskRequest, request: Request):
             enabled=get_settings().followup_enabled)
         ctx.set(body.session_id, question)   # 存改写后的完整问题作下轮上下文
     owner = _owner_hash(request)   # AB-HR2：开启时无 token → 401（落任务前拒绝）
-    task = get_task_store().create(question, body.role, owner=owner)
-    t0 = time.perf_counter()
 
     # E4②：澄清挂起拓扑（CLARIFY_SUSPEND_ENABLED=1 时启用挂起图 + thread 配置）
     suspend_on = get_settings().clarify_suspend_enabled
-    # AB-HR2：挂起 thread 建立（新问题，非 resume）时登记属主（thread_id 可由客户端
-    # 自供，与任务 id 不同命名空间——注册表是属主校验的权威源，与 InMemorySaver
-    # 同生命周期）。resume 不绑定：否则会先给未知 thread 绑上属主再校验，绕过 fail-closed。
-    if suspend_on and owner is not None and not body.resume:
-        # ASK-13 修复（评审 3.0）：属主校验从 resume 扩展到非 resume 写路径——
-        # bind 的 setdefault 只防"改属主"，不防"用别人的 thread 跑图"（可在受害者
-        # 挂起中的 thread 上追加超步顶掉澄清状态）。thread 已绑定且非本人 → 403，
-        # 与 resume 侧同款 fail-closed；未绑定/本人绑定 → 放行（后者 setdefault 保持原绑定）。
-        bound = get_task_store().thread_owner(body.thread_id or task["id"])
-        if bound is not None and not hmac.compare_digest(owner, bound):
-            raise HTTPException(status_code=403, detail="not the owner of this thread")
-        get_task_store().bind_thread_owner(body.thread_id or task["id"], owner)
     # ASK-7 修复（评审 2.0）：resume 前置条件曾零校验——开关关时 resume=true 被静默
     # 丢弃，澄清答案被当全新问题跑图出数；thread 缺失同样静默错跑。请求期显式拒绝。
+    # ASKBI-1（评审 4.0）：全部校验 raise 先于 create——曾 create 先行，校验失败的
+    # 早退把任务永久滞留 running 绕过内存上限。
     if body.resume:
         if not suspend_on:
             raise HTTPException(status_code=422, detail="澄清挂起未启用，resume 请求无效")
@@ -157,6 +145,23 @@ async def ask(body: AskRequest, request: Request):
         snap = await graph.aget_state({"configurable": {"thread_id": body.thread_id}})
         if not snap.next:
             raise HTTPException(status_code=409, detail="该 thread 无挂起的澄清可恢复")
+    # AB-HR2：挂起 thread 建立（新问题，非 resume）时登记属主（thread_id 可由客户端
+    # 自供，与任务 id 不同命名空间——注册表是属主校验的权威源，与 InMemorySaver
+    # 同生命周期）。resume 不绑定：否则会先给未知 thread 绑上属主再校验，绕过 fail-closed。
+    # ASK-13 修复（评审 3.0）：属主校验从 resume 扩展到非 resume 写路径——
+    # bind 的 setdefault 只防"改属主"，不防"用别人的 thread 跑图"（可在受害者
+    # 挂起中的 thread 上追加超步顶掉澄清状态）。thread 已绑定且非本人 → 403，
+    # 与 resume 侧同款 fail-closed；未绑定/本人绑定 → 放行（后者 setdefault 保持原绑定）。
+    # ASKBI-1：403 冲突检查拆到 create 之前（新任务 id 恒未绑定，检查只在客户端
+    # 自供 thread_id 时才有意义），绑定落表仍在 create 后——校验失败不留孤儿任务。
+    if suspend_on and owner is not None and not body.resume and body.thread_id:
+        bound = get_task_store().thread_owner(body.thread_id)
+        if bound is not None and not hmac.compare_digest(owner, bound):
+            raise HTTPException(status_code=403, detail="not the owner of this thread")
+    task = get_task_store().create(question, body.role, owner=owner)
+    t0 = time.perf_counter()
+    if suspend_on and owner is not None and not body.resume:
+        get_task_store().bind_thread_owner(body.thread_id or task["id"], owner)
     graph = _get_suspend_graph() if suspend_on else get_graph()
     astream_config = ({"configurable": {"thread_id": body.thread_id or task["id"]}}
                       if suspend_on else None)
@@ -168,60 +173,72 @@ async def ask(body: AskRequest, request: Request):
         if followup_note:
             yield _sse({"type": "event", "node": "followup", "message": followup_note})
         try:
-            if suspend_on and body.resume:
-                payload = Command(resume=question)   # 恢复挂起的澄清（question=用户回答）
-            else:
-                # ASK-10 修复（评审 2.0）：payload 曾不含 depth——schemas 声明的显式
-                # 覆盖从未接线，评测用 depth=full 实际无效果。
-                payload = {"question": question, "role": body.role, "depth": body.depth,
-                           "events": [], "usage": {}}
-            async for update in graph.astream(payload, config=astream_config,
-                                              stream_mode="updates"):
-                if "__interrupt__" in update:        # 澄清挂起：通知客户端带 thread_id 回答
-                    intr = update["__interrupt__"][0]
-                    value = intr.value if isinstance(intr.value, dict) else {}
-                    get_task_store().finish(
-                        task["id"], {"kind": "clarify_pending", "thread_id": astream_config[
-                            "configurable"]["thread_id"], "clarify": value},
-                        final_state.get("usage", {}), final_state.get("events", []),
-                        (time.perf_counter() - t0) * 1000)
-                    yield _sse({"type": "clarify_pending",
-                                "thread_id": astream_config["configurable"]["thread_id"],
-                                **value})
-                    return
-                for node, delta in update.items():
-                    if not isinstance(delta, dict):
-                        continue
-                    if delta.get("status"):
-                        yield _sse({"type": "node_done", "node": node, "status": delta["status"]})
-                    events = delta.get("events") or []
-                    for ev in events[sent_events:]:
-                        # ASK-2 修复（评审 2.0）：曾 `{"type":"event", **ev}`——内层事件恒含
-                        # "type"，dict 展开后内层胜出，三类帧契约失效、前端执行日志恒空。
-                        # 内层事件类型改走 event_type 子字段，顶层 type 契约保住。
-                        yield _sse({"type": "event", "ts": ev.get("ts"),
-                                    "node": ev.get("node"),
-                                    "event_type": ev.get("type"),
-                                    "data": ev.get("data")})
-                    sent_events = max(sent_events, len(events))
-                    final_state.update(delta)
-        except Exception as e:  # noqa: BLE001
-            yield _sse({"type": "error", "message": str(e)})
-            get_task_store().finish(
-                task["id"], {"kind": "error", "message": str(e)}, final_state.get("usage", {}),
-                final_state.get("events", []), (time.perf_counter() - t0) * 1000,
-            )
-            return
+            try:
+                if suspend_on and body.resume:
+                    payload = Command(resume=question)   # 恢复挂起的澄清（question=用户回答）
+                else:
+                    # ASK-10 修复（评审 2.0）：payload 曾不含 depth——schemas 声明的显式
+                    # 覆盖从未接线，评测用 depth=full 实际无效果。
+                    payload = {"question": question, "role": body.role, "depth": body.depth,
+                               "events": [], "usage": {}}
+                async for update in graph.astream(payload, config=astream_config,
+                                                  stream_mode="updates"):
+                    if "__interrupt__" in update:        # 澄清挂起：通知客户端带 thread_id 回答
+                        intr = update["__interrupt__"][0]
+                        value = intr.value if isinstance(intr.value, dict) else {}
+                        get_task_store().finish(
+                            task["id"], {"kind": "clarify_pending", "thread_id": astream_config[
+                                "configurable"]["thread_id"], "clarify": value},
+                            final_state.get("usage", {}), final_state.get("events", []),
+                            (time.perf_counter() - t0) * 1000)
+                        yield _sse({"type": "clarify_pending",
+                                    "thread_id": astream_config["configurable"]["thread_id"],
+                                    **value})
+                        return
+                    for node, delta in update.items():
+                        if not isinstance(delta, dict):
+                            continue
+                        if delta.get("status"):
+                            yield _sse({"type": "node_done", "node": node, "status": delta["status"]})
+                        events = delta.get("events") or []
+                        for ev in events[sent_events:]:
+                            # ASK-2 修复（评审 2.0）：曾 `{"type":"event", **ev}`——内层事件恒含
+                            # "type"，dict 展开后内层胜出，三类帧契约失效、前端执行日志恒空。
+                            # 内层事件类型改走 event_type 子字段，顶层 type 契约保住。
+                            yield _sse({"type": "event", "ts": ev.get("ts"),
+                                        "node": ev.get("node"),
+                                        "event_type": ev.get("type"),
+                                        "data": ev.get("data")})
+                        sent_events = max(sent_events, len(events))
+                        final_state.update(delta)
+            except Exception as e:  # noqa: BLE001
+                yield _sse({"type": "error", "message": str(e)})
+                get_task_store().finish(
+                    task["id"], {"kind": "error", "message": str(e)}, final_state.get("usage", {}),
+                    final_state.get("events", []), (time.perf_counter() - t0) * 1000,
+                )
+                return
 
-        answer = final_state.get("answer") or {"kind": "error", "message": "no answer produced"}
-        usage = final_state.get("usage", {})
-        events = final_state.get("events", [])
-        elapsed = (time.perf_counter() - t0) * 1000
-        get_task_store().finish(task["id"], answer, usage, events, elapsed)
-        yield _sse({
-            "type": "final", "task_id": task["id"], "answer": answer,
-            "usage": usage, "elapsed_ms": round(elapsed, 1),
-        })
+            answer = final_state.get("answer") or {"kind": "error", "message": "no answer produced"}
+            usage = final_state.get("usage", {})
+            events = final_state.get("events", [])
+            elapsed = (time.perf_counter() - t0) * 1000
+            get_task_store().finish(task["id"], answer, usage, events, elapsed)
+            yield _sse({
+                "type": "final", "task_id": task["id"], "answer": answer,
+                "usage": usage, "elapsed_ms": round(elapsed, 1),
+            })
+        finally:
+            # ASKBI-1（评审 4.0）：任何退出路径的终态兜底——客户端断连（GeneratorExit）/
+            # 请求取消（CancelledError）均 BaseException，except Exception 接不住，
+            # 任务曾永久滞留 running 绕过内存上限。已终态（正常/error/clarify_pending）
+            # → finish_if_running no-op；断连 → kind=aborted（含 partial usage/events）。
+            # finally 内不得 yield（生成器正在关闭，RuntimeError）。
+            get_task_store().finish_if_running(
+                task["id"], {"kind": "aborted", "message": "客户端断连或请求早退"},
+                final_state.get("usage", {}), final_state.get("events", []),
+                (time.perf_counter() - t0) * 1000,
+            )
 
     return StreamingResponse(
         gen(), media_type="text/event-stream",

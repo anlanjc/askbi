@@ -115,3 +115,93 @@ async def test_depth_override_reaches_router(client):
     routes = [f for f in frames if f["type"] == "event" and f.get("node") == "router"]
     assert routes and routes[0]["data"]["depth"] == "full"
     assert "explicit" in routes[0]["data"]["reason"]
+
+
+# ---- ASKBI-1 回归（评审 4.0）：SSE 断连/早退任务永久滞留 running 绕过内存上限 ----
+
+
+async def test_sse_client_disconnect_marks_task_terminal(db_path):
+    """客户端中途断连：任务必须落终态（曾永久滞留 running，绕过 ASK-9 内存上限）。"""
+    import asyncio
+    import json as _json
+
+    from app.api.main import app
+    from app.api.task_store import get_task_store
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1", "method": "POST", "scheme": "http",
+        "path": "/api/ask", "raw_path": b"/api/ask", "query_string": b"",
+        "root_path": "", "headers": [(b"content-type", b"application/json")],
+        "client": ("testclient", 123), "server": ("testserver", 80),
+    }
+    payload = _json.dumps({"question": "上个月的销售额是多少", "role": "boss"}).encode()
+    messages: list[dict] = []
+    start_seen = asyncio.Event()
+    request_sent = False
+
+    async def receive():
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": payload, "more_body": False}
+        await start_seen.wait()          # start 帧送达后模拟客户端断连
+        return {"type": "http.disconnect"}
+
+    async def send(msg):
+        messages.append(msg)
+        if msg["type"] == "http.response.body" and b'"start"' in (msg.get("body") or b""):
+            start_seen.set()
+
+    app_task = asyncio.create_task(app(scope, receive, send))
+    await asyncio.wait_for(start_seen.wait(), timeout=30)
+    start_frame = next(m for m in messages
+                       if m["type"] == "http.response.body" and b'"start"' in (m.get("body") or b""))
+    task_id = _json.loads(start_frame["body"].decode().split("data: ", 1)[1])["task_id"]
+    assert get_task_store().get(task_id)["status"] == "running"
+
+    await asyncio.wait_for(app_task, timeout=30)   # 断连 → 取消流式生成器 → 兜底落终态
+    final = get_task_store().get(task_id)
+    assert final["status"] != "running", f"断连后任务仍滞留 {final['status']}"
+    assert final["kind"] == "aborted"
+
+
+async def test_validation_early_exit_leaves_no_orphan_task(client, db_path):
+    """校验失败的早退（resume 422 等）不得留下 running 孤儿任务（曾 create 先于校验）。"""
+    from app.api.task_store import get_task_store
+
+    store = get_task_store()
+    before_running = sum(1 for t in store._tasks.values() if t["status"] == "running")
+    r = await client.post("/api/ask", json={"question": "上月销售额", "resume": True})
+    assert r.status_code == 422
+    after_running = sum(1 for t in store._tasks.values() if t["status"] == "running")
+    assert after_running == before_running, "校验失败的早退不得新增 running 孤儿任务"
+
+
+def test_load_marks_stale_running_as_aborted_and_evicts(db_path, tmp_path):
+    """重启 _load：JSONL 里滞留的 running 僵尸载入时即标 aborted（重启后不可能仍在跑），
+    且 _load 末尾执行上限淘汰——历史僵尸不得把 200 上限永久顶满。"""
+    import json as _json
+
+    from app.api.task_store import _MAX_IN_MEMORY, TaskStore
+
+    path = tmp_path / "tasks.jsonl"
+    n_stale = _MAX_IN_MEMORY + 30
+    with path.open("w", encoding="utf-8") as f:
+        for i in range(n_stale):
+            f.write(_json.dumps({
+                "id": f"zombie{i:04d}", "question": f"历史僵尸{i}", "role": "boss",
+                "status": "running", "kind": None,
+                "created_at": f"2026-01-01T{(i // 3600) % 24:02d}:{(i // 60) % 60:02d}:{i % 60:02d}",
+                "elapsed_ms": None, "answer": None, "usage": {}, "events": [],
+            }, ensure_ascii=False) + "\n")
+
+    store = TaskStore(path=path)
+    statuses = {t["status"] for t in store._tasks.values()}
+    assert statuses == {"done"}, f"载入的僵尸必须全部落终态，实得 {statuses}"
+    assert len(store._tasks) <= _MAX_IN_MEMORY
+    # 淘汰保新：最新（字典序最大 created_at）的僵尸必须仍在内存里
+    newest_id = f"zombie{n_stale - 1:04d}"
+    assert store.get(newest_id) is not None
+    # JSONL 追加日志保持原样（可回放），载入标记只影响内存态
+    assert sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip()) == n_stale

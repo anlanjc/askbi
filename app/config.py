@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     openai_model: str = ""
 
     # 数据
-    data_dir: str = "data"
     db_path: str = "data/askbi.duckdb"
     dataset: str = "ecommerce"  # 数据源选择（app/data/registry.py 注册表：ecommerce | coffee）
     generator_seed: int = 42
@@ -38,7 +37,9 @@ class Settings(BaseSettings):
 
     # 安全
     sql_timeout_seconds: float = 10.0
-    role: str = "boss"
+    # 注（ASKBI-4，评审 4.0）：曾声明 ROLE 字段并文档化「环境级行级权限角色」，
+    # 但全仓零消费——实际角色永远来自请求体（schemas.py 默认 boss）。死配置已删，
+    # 不留"设了毫无效果"的假开关；行级权限的合法入口是请求体 role 字段。
 
     # 编排
     max_sql_repairs: int = 2

@@ -9,6 +9,8 @@ __pycache__/
 # 密钥与本地配置
 .env
 .env.*
+# 反规则：模板非密钥，必须入库（ASKBI-4：.env.example 曾被 .env.* 误伤从未入库）
+!.env.example
 
 # 运行时数据（种子 42，scripts/gen_data.py 确定性重建）
 data/*.duckdb

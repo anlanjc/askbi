@@ -14,8 +14,9 @@ from pathlib import Path
 _COMPOSE = Path(__file__).resolve().parents[1] / "docker-compose.yml"
 
 # DEPLOY.md「环境变量清单」+ .env.example 两条 provider 路线的并集：容器必须能收到
+# （ROLE 不在列：ASKBI-4 确认其为死配置已删，角色来自请求体）
 _REQUIRED_VARS = {
-    "LLM_PROVIDER", "PROFILE", "API_KEY", "ROLE",
+    "LLM_PROVIDER", "PROFILE", "API_KEY",
     "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL",
     "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
 }
@@ -58,3 +59,10 @@ def test_compose_env_lines_use_host_passthrough_form():
         name, _, value = s[2:].partition("=")
         assert value.startswith("${") and name in value, \
             f"变量行必须 ${'{VAR:-default}'} 透传宿主机值：{s}"
+
+
+def test_compose_does_not_carry_dead_config_vars():
+    """ASKBI-4（评审 4.0）：ROLE 曾声明为行级权限角色但全仓零消费（角色来自请求体）——
+    compose 白名单不得透传死配置误导部署者。"""
+    env = _compose_env_vars()
+    assert "ROLE" not in env, "ROLE 是死配置（实际角色来自请求体），compose 不得透传"

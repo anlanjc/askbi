@@ -16,7 +16,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-}
       - API_KEY=${API_KEY:-}
-      - ROLE=${ROLE:-boss}
+      # 注（ASKBI-4）：ROLE 曾透传但全仓零消费（实际角色来自请求体）——死配置已删
     volumes:
       # 数据与任务日志持久化（重建容器不丢历史）
       - askbi_data:/app/data

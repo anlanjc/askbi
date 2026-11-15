@@ -32,3 +32,11 @@ def test_profile_from_env(monkeypatch):
     monkeypatch.setenv("PROFILE", "full")
     s = Settings(llm_provider="mock")
     assert s.followup_enabled
+
+
+def test_settings_has_no_dead_config_fields():
+    """ASKBI-4（评审 4.0）：Settings 曾声明并文档化 ROLE/DATA_DIR 但全仓零消费——
+    部署者设了毫无效果却以为存在环境级权限/数据目录控制。死配置必须删。"""
+    s = Settings()
+    assert not hasattr(s, "role"), "ROLE 是死配置：实际角色来自请求体（schemas 默认 boss）"
+    assert not hasattr(s, "data_dir"), "DATA_DIR 是死配置：落盘路径只由 db_path 推导"

@@ -50,6 +50,6 @@ AskBI 的核心卖点是"语义层受控"：LLM 只产 DSL，SQL 由编译器从
 
 ## 7. 已知边界（下一步）
 
-- **RAG 样例库未按数据集隔离**：B 数据集的问题在真实 provider 下会检索到电商的 few-shot 样例（mock 不受影响）。样例库加 dataset 维度是下一步。
+- **RAG 样例库已按数据集隔离**（S9-OPT2/3b2becd 收口，ASKBI-6 勘误）：seed 条目带 spec 标签，get_example_store(dataset) 只装载同标签样例——B/C 问题检索不到电商 few-shot；默认数据集样例库与改造前逐字节一致（tests/test_rag_isolation.py 7 项金标 pin 守门），chroma 后端 collection 同按数据集命名隔离。
 - **多轮指代消解词表仍取默认数据集**：context.py 的实体词表在模块导入时从全局 DIMENSION_VALUES 构建，B 数据集的多轮消解（"那外卖呢"）暂不支持——followup 本身默认关闭，边界如实声明。
 - **评测集 B 全部 main split**：26 条用于多数据源回归验证，无调参流程故不设 holdout；扩大到 v2 同等规模时应引入分层。

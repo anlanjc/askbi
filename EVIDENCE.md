@@ -14,7 +14,7 @@
 ## 2. 四个关键决策
 
 1. **为什么不直接 NL2SQL**：LLM 只产出白名单约束的 DSL（枚举校验），物理 SQL 由编译器渲染——注入/幻觉表名在编译期不可达；DSL 可 diff 可单测，行级权限/LIMIT 策略编译期统一注入。
-2. **为什么 QA 闭环值得做**：反向消融实证（no_qa 单跑 real 口径，v2 116 条）——准确率 100%→93.9%、叙述数值一致率 100%→90.9%（ASK-12 勘误：原把同一跑的两个指标错标成「关叙述/关质检」两次消融，消融 runner 实无「关叙述」臂）。
+2. **为什么 QA 闭环值得做**：反向消融实证（no_qa 单跑 real 口径，v1 33 条；v2 116 条同口径消融为 94.8%→93.1%、100%→95.5%，见 §4）——准确率 100%→93.9%、叙述数值一致率 100%→90.9%（ASK-12 勘误：原把同一跑的两个指标错标成「关叙述/关质检」两次消融，消融 runner 实无「关叙述」臂）。
 3. **为什么缓存默认关 + PROFILE 档位**：实验功能保守上线（零行为变化可回滚），PROFILE=full 一键演示——压测同时证明缓存修复后 +12% 吞吐，档位与证据互相背书。
 4. **为什么语义层做成可注册数据源（AB-3，11-05 扩展到第三源）**：语义层（维度/指标/取值白名单/NL 词表）从模块级常量升级为 DatasetSpec 注册表——数据集 B（线下连锁咖啡，tickets/ticket_lines）与数据集 C（B2B SaaS 订阅，invoices/invoice_lines，11-05）物理表结构完全不同，**上层零改动**（图/节点/QA/评测/MCP 无一行 if dataset）；DEFAULT_SPEC 引用原常量对象 + 全部新参数带默认值，95 项存量测试零改动全绿、v1/v2 mock 100% 重跑作回归裁判。三源三套物理模型证明编译器只依赖 spec 声明。"支持多数据源接入"从口号变成可复现实证。ADR：docs/registry_adr.md。
 
@@ -88,10 +88,10 @@ LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset
 - 评测是 mock 可判定集（措辞对齐解析器词表），真实模型泛化上限由 real 报告的失败明细界定；holdout 13 条不参与调参。
 - 多轮 followup 的渠道词表已收敛到 DIMENSION_VALUES 单一来源；"换成 X 渠道"重复后缀 bug 已修复（AB-2 评审发现）。
 - clarify_suspend 需 API 层 thread_id/resume（图内 run_ask 不挂起）——多轮评测脚本按此适配（ADR 见 docs/multiturn_adr.md）。
-- 第二/第三数据源适配器已落地（registry_adr.md）：B/C 数据集共享全局 ROLE_SCOPES（同一大区划分）；RAG 样例库未按数据集隔离（真实 provider 下 B/C 问题会检索到电商 few-shot，mock 不受影响）；多轮指代消解词表仍取默认数据集（followup 默认关闭，边界如实声明）。
+- 第二/第三数据源适配器已落地（registry_adr.md）：B/C 数据集共享全局 ROLE_SCOPES（同一大区划分）；RAG 样例库已按数据集隔离（S9-OPT2/3b2becd 落地：seed 条目带 spec 标签，get_example_store(dataset) 只装载同标签样例，跨源 few-shot 不再串扰，tests/test_rag_isolation.py 7 项金标守门）；多轮指代消解词表仍取默认数据集（followup 默认关闭，边界如实声明）。
 - 管理面审计日志（11-05）："同事务"语义由 JSONL 翻译实现——变更与审计同锁窗口落盘、审计写失败变更回滚（app/audit.py 模块头有完整推导）；任务清除的归档改名假定单 worker 部署口径，多 worker 管理面属 PRODUCTION_GAP；ADMIN_TOKEN 留空=开放但全审计（与 api_key 同哲学）。
 - HTTP 全栈压测（11-05）：客户端与 uvicorn 同机共址，delay=0 高并发点位 QPS 受 CPU 争抢压制（0.53×），**不当服务端容量上限使用**；delay=300ms（真实形态近似）下 0.92~0.97× 才是部署参考口径。
-- 下一步：200+ 条评测集、RAG 样例库按数据集隔离、真实部署与灰度。
+- 下一步：200+ 条评测集（v2_140 148 条已落地）、真实部署与灰度。
 
 ## 7. 安全纵深批次（AB-HR，2026-11-09，任务卡 HANDOFF_askbi-hardening.md）
 

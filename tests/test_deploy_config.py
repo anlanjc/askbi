@@ -93,3 +93,49 @@ def test_mcp_floor_covers_server_import():
     floor = tuple(int(p) for p in m.group(1).split("."))
     assert floor >= (2, 0), \
         f"mcp 下限 {m.group(1)} 低于 server.py 实际依赖（mcp.server.mcpserver 仅 2.x 存在）"
+
+
+# ---- ASKBI-10（评审 4.0）：build context 排除表与 COPY 白名单的一致性 ----
+
+def _dockerignore_patterns() -> list[str]:
+    text = (_ROOT / ".dockerignore").read_text(encoding="utf-8")
+    return [s.strip() for s in text.splitlines()
+            if s.strip() and not s.strip().startswith("#")]
+
+
+def _dockerfile_copy_sources() -> list[str]:
+    return re.findall(r"^COPY\s+(\S+)", _DOCKERFILE.read_text(encoding="utf-8"), re.M)
+
+
+def test_dockerignore_excludes_secret_and_bulk_paths():
+    """仓库根曾无 .dockerignore——.venv/.git/data（askbi*.duckdb/tasks.jsonl）与
+    带真实 key 的 .env 全进 build context 发给构建 daemon（.gitignore 只约束
+    git，不约束 docker build 的上下文上传）。排除表必须覆盖密钥与大体积路径。"""
+    patterns = _dockerignore_patterns()
+    required = {
+        ".env": "真实密钥文件，绝不能进 build context",
+        ".env.*": ".env 变体（.env.example 等）同不入上下文",
+        ".git": "版本库历史（数百 MB）",
+        ".venv": "本地虚拟环境（数百 MB）",
+        "data": "*.duckdb/*.jsonl 数据产物（构建期由 gen_data.py 现生成，上下文不需要）",
+        "tests": "测试代码与其 _db 产物（镜像不含测试）",
+        "evidence": "评审/演示证据产物",
+    }
+    for p, why in required.items():
+        assert p in patterns, f".dockerignore 缺少 {p}（{why}）"
+
+
+def test_dockerignore_does_not_exclude_copy_sources():
+    """Dockerfile COPY 白名单语义不变：requirements.txt/app/scripts/eval/web 五项
+    （及 gen_data.py 构建步）必须不被 .dockerignore 排除——排除表只清非白名单
+    路径，COPY 进镜像的内容不得因排除表悄悄缺失。"""
+    patterns = _dockerignore_patterns()
+    for src in _dockerfile_copy_sources():
+        assert src not in patterns, \
+            f"COPY 源 {src} 被 .dockerignore 排除——镜像内容将缺失（白名单语义被破坏）"
+        # 顶级排除目录也不得是 COPY 源的父级（如误排 app 会吞掉 COPY app ./app）
+        for p in patterns:
+            if p.startswith("**/") or p.startswith("!") or "*" in p:
+                continue   # 通配排除只命中原名匹配已单独查过的场景，父级误吞风险极低
+            if (p.endswith("/") and src.startswith(p)) or src.startswith(p + "/"):
+                raise AssertionError(f"COPY 源 {src} 落在排除目录 {p} 下——镜像内容将缺失")

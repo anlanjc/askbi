@@ -1,0 +1,31 @@
+# ASKBI-10（评审 4.0）：build context 排除表。仓库根曾无本文件——.venv/.git/
+# data（askbi*.duckdb/tasks.jsonl）与带真实 key 的 .env 全部进 build context
+# 发给构建 daemon（.gitignore 只约束 git，不约束 docker build 的上下文上传），
+# 而镜像实际只用 Dockerfile COPY 白名单五项：requirements.txt/app/scripts/eval/web。
+# 维护约定：新增 COPY 项时在此放行（同步跑 tests/test_deploy_config.py 的
+# COPY 白名单双断言守门）；本表只排非白名单路径与可再生缓存，不动白名单内容。
+
+# 密钥与环境（含真实 key 的 .env 绝不能发给构建 daemon）
+.env
+.env.*
+
+# 版本库与本地环境
+.git
+.venv
+
+# 数据产物（构建期由 RUN python scripts/gen_data.py 现生成，上下文不需要）
+data
+tests
+practice
+evidence
+
+# 非镜像内容的仓库资产（文档/CI/评测平台配置）
+docs
+.agenteval
+.github
+
+# 工具缓存与字节码（可再生）
+.pytest_cache
+.ruff_cache
+**/__pycache__
+**/*.py[cod]

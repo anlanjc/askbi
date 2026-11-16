@@ -13,13 +13,13 @@
 
 **组合叙事**：检索增强（policy-compass）→ **工具编排与数值可信（askbi，本仓库）** → 底层引擎（miniagent）→ 评测量化（agenteval）→ 认知记忆（memomind）→ 网关与多租户（agentgate）。askbi 承担的位置是"多 Agent 协作 + 结果可信"：policy-compass 证明检索正确，askbi 证明**数字正确**。
 
-**简历一句话版**：多 Agent 对话式 BI（LangGraph 七节点 + NL2DSL2SQL 受控编译 + DuckDB 只读沙箱，307 项测试）：v2 分层集 116 条 real 94.8%（数值一致率 100%）、13 条 holdout 盲测不参与调参、关质检消融归因类 12/12→5/12（QA 闭环 +58pp）、多轮 30 条 64 轮 mock 100%、故障注入 6 场景×10 零崩溃、三数据源上层零改动（DatasetSpec 注册表：订单/小票/账单三套物理模型）、管理面审计日志（变更与审计同窗口落盘）。
+**简历一句话版**：多 Agent 对话式 BI（LangGraph 七节点 + NL2DSL2SQL 受控编译 + DuckDB 只读沙箱，313 项测试）：v2 分层集 116 条 real 94.8%（数值一致率 100%）、13 条 holdout 盲测不参与调参、关质检消融归因类 12/12→5/12（QA 闭环 +58pp）、多轮 30 条 64 轮 mock 100%、故障注入 6 场景×10 零崩溃、三数据源上层零改动（DatasetSpec 注册表：订单/小票/账单三套物理模型）、管理面审计日志（变更与审计同窗口落盘）。
 
 **数字台账（全部实跑口径，mock 与 real 严格分列）**：
 
 | 层 | 数字 | 出处 |
 |---|---|---|
-| 测试 | pytest **307 项全绿** | `python -m pytest -q` |
+| 测试 | pytest **313 项全绿** | `python -m pytest -q` |
 | 单轮 real | v1 33 条 **100%**；v2 116 条 **94.8%**（110/116，数值一致率 100%；query 79/80 · drill 12/12 · clarify 12/12 · refusal 7/12，成本 560,550 token） | eval/report_openai_compatible_dataset_v2.md |
 | 单轮 mock | v1 33 条 **100%** / v2 116 条 **100%**（金标由 compile_sql 生成+构建期自检） | eval/report_mock_dataset_v2.md |
 | **holdout 纪律** | 13 条 holdout **盲测两轮 84.6%/100%**，**不参与调参**——clarifier 校准只用 main split 失败信号 | eval/report_openai_compatible_dataset_v2_holdout*.md |

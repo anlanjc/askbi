@@ -8,7 +8,7 @@
 
 | 要素 | 现状 | 证据 |
 |---|---|---|
-| 测试 | 307 项 pytest 全绿（单元/集成/API roundtrip/红队/属主隔离） | `pytest -q` |
+| 测试 | 313 项 pytest 全绿（单元/集成/API roundtrip/红队/属主隔离） | `pytest -q` |
 | 评测 | 单轮 116 条（mock 100%/real 94.8%+holdout 盲测）+ 多轮 64 轮（mock 100%/real 89.1%）+ no_qa 消融（QA 价值 +58pp） | eval/report_*.md |
 | 可靠性 | 故障注入 6 场景×10 零崩溃；LLMError 重试+四节点降级；SQL 超时 interrupt | evidence/fault_injection.md |
 | 性能 | 编排上限 110-124 QPS（0 延迟）；300ms 模拟 LLM 延迟下 P50≈1.2s；瓶颈归因=LLM 串行调用（light 2 次/full 4 次），检索占比个位数 | evidence/load_test.md |

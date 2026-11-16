@@ -5,13 +5,19 @@ COPY .env（pydantic-settings env_file 指向的 /app/.env 不存在）——按
 「环境变量清单（Docker/平台通用）」部署时配置被静默丢弃：PROFILE=full 演示特性
 不开且无任何报错；LLM_PROVIDER=openai_compatible 时凭据三件套收不到，每次请求
 LLM 调用必失败。纯静态文本断言，不触 Docker。
+
+ASKBI-9 / ASKBI-10（评审 4.0）扩展：requirements 下限与实际 import 的一致性、
+build context 排除表（.dockerignore）与 Dockerfile COPY 白名单的一致性。
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-_COMPOSE = Path(__file__).resolve().parents[1] / "docker-compose.yml"
+_ROOT = Path(__file__).resolve().parents[1]
+_COMPOSE = _ROOT / "docker-compose.yml"
+_DOCKERFILE = _ROOT / "Dockerfile"
 
 # DEPLOY.md「环境变量清单」+ .env.example 两条 provider 路线的并集：容器必须能收到
 # （ROLE 不在列：ASKBI-4 确认其为死配置已删，角色来自请求体）
@@ -66,3 +72,24 @@ def test_compose_does_not_carry_dead_config_vars():
     compose 白名单不得透传死配置误导部署者。"""
     env = _compose_env_vars()
     assert "ROLE" not in env, "ROLE 是死配置（实际角色来自请求体），compose 不得透传"
+
+
+# ---- ASKBI-9（评审 4.0）：requirements 下限与实际 import 的一致性 ----
+
+def test_mcp_floor_covers_server_import():
+    """server.py 用 `from mcp.server.mcpserver import MCPServer`——该模块仅 mcp 2.x
+    存在（1.x 只有 mcp/server/fastmcp；mcp 1.2.0 wheel 实测无 mcpserver 模块，
+    本机 .venv 实装 2.3.0 可 import）。requirements 曾声明 mcp>=1.2：按声明下限
+    解析到 1.x 的环境跑 scripts/mcp_server.py 在 import 处即 ModuleNotFoundError。
+    钉住：①模块在本环境可寻位；②声明下限 ≥ 2.0。"""
+    import importlib.util
+
+    assert importlib.util.find_spec("mcp.server.mcpserver") is not None, \
+        "mcp.server.mcpserver 不可寻位——app/mcp/server.py 的 import 在本环境即失效"
+
+    text = (_ROOT / "requirements.txt").read_text(encoding="utf-8")
+    m = re.search(r"^mcp>=([\d.]+)", text, re.M)
+    assert m, "requirements.txt 必须声明 mcp>= 下限"
+    floor = tuple(int(p) for p in m.group(1).split("."))
+    assert floor >= (2, 0), \
+        f"mcp 下限 {m.group(1)} 低于 server.py 实际依赖（mcp.server.mcpserver 仅 2.x 存在）"

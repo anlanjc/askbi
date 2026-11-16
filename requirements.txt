@@ -10,7 +10,10 @@ langgraph>=0.2.60
 duckdb>=1.0
 numpy>=1.26
 # mcp
-mcp>=1.2
+# ASKBI-9（评审 4.0）：mcp.server.mcpserver 仅 2.x 存在（1.x 只有 fastmcp——
+# mcp 1.2.0 wheel 实测无 mcpserver 模块），下限曾 mcp>=1.2，按下限解析到
+# 1.x 的环境 import scripts/mcp_server.py 即 ModuleNotFoundError。
+mcp>=2.0
 # web
 fastapi>=0.111
 uvicorn>=0.30

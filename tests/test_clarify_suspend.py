@@ -83,6 +83,52 @@ async def test_flag_off_keeps_legacy_clarify(db_path):
     assert state["answer"]["kind"] == "clarify"
 
 
+def test_task_store_resume_marker_setdefault_semantics(tmp_path):
+    """ASKBI-7（评审 4.0）：resume 在途标记原语——setdefault 占用语义。
+
+    首占成功 / 同 thread 重复占用失败 / 不同 thread 互不影响 / 释放后可再占。
+    """
+    from app.api.task_store import TaskStore
+
+    store = TaskStore(path=tmp_path / "tasks.jsonl")
+    assert store.acquire_thread_resume("t1") is True    # 首占成功
+    assert store.acquire_thread_resume("t1") is False   # 同 thread 二占失败 → 409 依据
+    assert store.acquire_thread_resume("t2") is True    # 不同 thread 互不影响
+    store.release_thread_resume("t1")
+    assert store.acquire_thread_resume("t1") is True    # 释放后可再占
+    store.release_thread_resume("t1")
+    store.release_thread_resume("t2")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_resume_single_winner(db_path, monkeypatch):
+    """ASKBI-7（评审 4.0）：resume 曾是无保护 check-then-act——aget_state 确认
+    snap.next 到 astream(Command(resume)) 之间无 per-thread 在途标记，两个并发
+    resume 都能通过检查并各自恢复同一挂起 thread（同一次澄清跑两遍图/双倍记账/
+    竞写 checkpointer）。修复后：同 thread 并发 resume 必须 200/409 各一。"""
+    import asyncio
+
+    import httpx
+
+    from app.api.main import app as api_app
+
+    monkeypatch.setattr(get_settings(), "clarify_suspend_enabled", True)
+    transport = httpx.ASGITransport(app=api_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r1 = await c.post("/api/ask", json={"question": "最近卖得怎么样", "thread_id": "t-race"})
+        assert r1.status_code == 200
+        assert "clarify_pending" in r1.text
+        r2, r3 = await asyncio.gather(
+            c.post("/api/ask", json={"question": "我想看销售额", "thread_id": "t-race",
+                                     "resume": True}),
+            c.post("/api/ask", json={"question": "我想看毛利率", "thread_id": "t-race",
+                                     "resume": True}),
+        )
+    codes = sorted([r2.status_code, r3.status_code])
+    assert codes == [200, 409], \
+        f"同 thread 并发 resume 必须 200/409 各一（双双通过检查=恢复竞态双跑）：got {codes}"
+
+
 @pytest.mark.asyncio
 async def test_api_clarify_pending_and_resume(db_path, monkeypatch):
     """API 端到端：挂起推 clarify_pending → 带 thread_id+resume 恢复出数。"""

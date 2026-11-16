@@ -180,10 +180,12 @@ async def ask(body: AskRequest, request: Request):
     async def gen():
         sent_events = 0
         final_state: dict = {}
-        yield _sse({"type": "start", "task_id": task["id"]})
-        if followup_note:
-            yield _sse({"type": "event", "node": "followup", "message": followup_note})
+        # ASKBI-7：try 上移覆盖首帧——生成器若在首个 yield 即被关闭（客户端秒断），
+        # 也必须走 finally 释放在途标记，否则该 thread 永久不可恢复。
         try:
+            yield _sse({"type": "start", "task_id": task["id"]})
+            if followup_note:
+                yield _sse({"type": "event", "node": "followup", "message": followup_note})
             try:
                 if suspend_on and body.resume:
                     payload = Command(resume=question)   # 恢复挂起的澄清（question=用户回答）
@@ -240,6 +242,10 @@ async def ask(body: AskRequest, request: Request):
                 "usage": usage, "elapsed_ms": round(elapsed, 1),
             })
         finally:
+            # ASKBI-7（评审 4.0）：resume 在途标记释放——astream 正常结束/出错/
+            # clarify_pending 早退/断连取消均必经此处；释放幂等。
+            if body.resume and suspend_on:
+                get_task_store().release_thread_resume(body.thread_id)
             # ASKBI-1（评审 4.0）：任何退出路径的终态兜底——客户端断连（GeneratorExit）/
             # 请求取消（CancelledError）均 BaseException，except Exception 接不住，
             # 任务曾永久滞留 running 绕过内存上限。已终态（正常/error/clarify_pending）
@@ -251,6 +257,16 @@ async def ask(body: AskRequest, request: Request):
                 (time.perf_counter() - t0) * 1000,
             )
 
+    # ASKBI-7（评审 4.0）：resume 曾是无保护 check-then-act——aget_state 确认 snap.next
+    # 到 astream(Command(resume)) 之间无 per-thread 在途标记，两个并发 resume 都能通过
+    # 检查并各自恢复同一挂起 thread（同一次澄清跑两遍图/双倍记账/竞写 checkpointer）。
+    # setdefault 式占用：已在途 → 409。占用放响应返回前的最后一步——从 aget_state
+    # 返回到这里全部同步无 await（单事件循环内不存在插队窗口），create() 等先行步骤
+    # 抛错时也不会留下无 gen 兜底释放的孤儿标记。
+    if body.resume and suspend_on:
+        if not get_task_store().acquire_thread_resume(body.thread_id):
+            raise HTTPException(status_code=409,
+                                detail="该 thread 的澄清已在恢复中，请勿重复提交")
     return StreamingResponse(
         gen(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

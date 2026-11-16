@@ -29,6 +29,11 @@ class TaskStore:
         # 与 InMemorySaver checkpointer 同生命周期：挂起的 thread 本就不跨重启，
         # 内存态注册表不引入新的持久化面。FIFO 上限防长跑无界增长（ASK-9 同思路）。
         self._thread_owners: dict[str, str | None] = {}
+        # ASKBI-7（评审 4.0）：resume 在途标记——thread_id 集合，占用窗口 = 校验挂起
+        # 通过 → astream(Command(resume)) 结束（gen finally 释放）。纯内存态：与挂起
+        # 拓扑 checkpointer 同生命周期，条目数受并发 resume 数约束且每条必被 finally
+        # 释放，无需上限淘汰。
+        self._resuming_threads: set[str] = set()
         self._load()
 
     # ---- AB-HR2 thread 属主注册表 ----
@@ -49,6 +54,23 @@ class TaskStore:
         """未登记的 thread 返回 None（fail-closed：无法证明属主）。"""
         with self._lock:
             return self._thread_owners.get(thread_id)
+
+    # ---- ASKBI-7（评审 4.0）resume 在途标记 ----
+
+    def acquire_thread_resume(self, thread_id: str) -> bool:
+        """per-thread resume 在途占用（setdefault 语义）：第一个 caller 占用成功
+        返回 True；同 thread 其余并发 caller 得 False（API 层据此 409 拒绝第二个
+        resume——曾两个都能通过 snap.next 检查并各自恢复同一挂起 thread）。"""
+        with self._lock:
+            if thread_id in self._resuming_threads:
+                return False
+            self._resuming_threads.add(thread_id)
+            return True
+
+    def release_thread_resume(self, thread_id: str) -> None:
+        """释放 resume 在途占用（SSE 生成器 finally 必经）。幂等：未占用时 no-op。"""
+        with self._lock:
+            self._resuming_threads.discard(thread_id)
 
     def _load(self) -> None:
         if not self.path.exists():

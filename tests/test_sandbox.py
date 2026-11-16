@@ -74,6 +74,67 @@ async def test_timeout_does_not_poison_pool(db_path):
     assert res.rows[0][0] > 0
 
 
+# ---- ASKBI-8（评审 4.0）：取消路径也必须先 interrupt 再 close ----
+
+async def test_cancel_path_interrupts_worker_before_close(monkeypatch):
+    """外层取消（客户端断连 → CancelledError，BaseException）不经 except TimeoutError
+    直达 finally——若 interrupt 只接在超时分支，to_thread 里仍在跑的查询会撞上被关闭
+    的连接（:127 注释承诺的保护在取消路径缺席）。假连接记录事件时序：取消后必须
+    出现 interrupt 且先于 close；CancelledError 本身必须继续向外传播。"""
+    import asyncio
+    import threading
+
+    from app.data import sandbox as sandbox_mod
+    from app.data.sandbox import Sandbox
+
+    class _FakeCon:
+        """模拟跨线程查询：execute 阻塞直到 interrupt()，事件顺序可断言。"""
+
+        def __init__(self):
+            self.events = []
+            self._wake = threading.Event()
+
+        def execute(self, sql):
+            self.events.append("query_start")
+            if not self._wake.wait(timeout=10):
+                raise AssertionError("查询未被 interrupt 打断（等待超时）")
+            self.events.append("query_end")
+            return None
+
+        def interrupt(self):
+            self.events.append("interrupt")
+            self._wake.set()
+
+        def close(self):
+            self.events.append("close")
+
+    fake = _FakeCon()
+    monkeypatch.setattr(sandbox_mod.duckdb, "connect", lambda *a, **k: fake)
+    monkeypatch.setattr(Sandbox, "_run", lambda self, con, sql: con.execute(sql))
+
+    sb = Sandbox(db_path="unused.db", timeout=30)
+    task = asyncio.create_task(sb.execute("SELECT 1"))
+    for _ in range(500):          # 等工作线程真正开始执行查询
+        if "query_start" in fake.events:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail("工作线程未启动")
+
+    task.cancel()                 # 模拟客户端断连：外层任务被取消
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for _ in range(500):          # 等工作线程被 interrupt 唤醒收尾
+        if "query_end" in fake.events:
+            break
+        await asyncio.sleep(0.01)
+
+    assert "interrupt" in fake.events, \
+        f"取消路径未打断 to_thread 里仍在跑的查询: {fake.events}"
+    assert fake.events.index("interrupt") < fake.events.index("close"), \
+        f"必须先 interrupt 再 close（close 撞上未中止查询=连接竞写）: {fake.events}"
+
+
 # ---- ASK-1 红队回归（评审 2.0 P0）：表函数读文件/装扩展 ----
 
 def test_guard_rejects_file_read_table_functions():

@@ -124,11 +124,22 @@ class Sandbox:
                 asyncio.to_thread(self._run, con, safe_sql), timeout=self.timeout
             )
         except TimeoutError:
-            # asyncio.to_thread 无法取消已开跑的线程，必须用 interrupt()
-            # 从事件循环线程打断工作线程中的查询（duckdb 支持跨线程调用）
-            con.interrupt()
             raise SqlTimeout(f"查询超过 {self.timeout}s 被中断") from None
         finally:
+            # ASKBI-8（评审 4.0）：interrupt 提到 finally——取消传播不完整收口。
+            # 曾 interrupt() 只接在 except TimeoutError 分支：客户端断连等外层
+            # CancelledError（BaseException，except TimeoutError 接不住）直达
+            # finally 的 con.close()，to_thread 里仍在跑的查询撞上被关连接——
+            # :127 注释承诺的「必须用 interrupt 打断工作线程」在取消路径缺席。
+            # 超时/取消/出错三条路径统一先打断工作线程再关闭。
+            # 查询已正常结束时 interrupt() 无害：无后续查询（连接立即关闭），
+            # 标记不落在任何可被误伤的执行上。
+            # （asyncio.to_thread 无法取消已开跑的线程，必须用 interrupt()
+            # 从事件循环线程打断工作线程中的查询——duckdb 支持跨线程调用）
+            try:
+                con.interrupt()
+            except Exception:  # noqa: BLE001, S110  连接已失效时 interrupt 自身可能失败，交给 close
+                pass
             try:
                 con.close()
             except Exception:  # noqa: BLE001, S110  极端竞态下 close 可能撞上未完全中止的查询

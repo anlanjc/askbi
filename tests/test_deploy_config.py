@@ -88,7 +88,7 @@ def test_mcp_floor_covers_server_import():
         "mcp.server.mcpserver 不可寻位——app/mcp/server.py 的 import 在本环境即失效"
 
     text = (_ROOT / "requirements.txt").read_text(encoding="utf-8")
-    m = re.search(r"^mcp>=([\d.]+)", text, re.M)
+    m = re.search(r"^mcp>=([\d.]+)", text, re.MULTILINE)
     assert m, "requirements.txt 必须声明 mcp>= 下限"
     floor = tuple(int(p) for p in m.group(1).split("."))
     assert floor >= (2, 0), \
@@ -104,7 +104,7 @@ def _dockerignore_patterns() -> list[str]:
 
 
 def _dockerfile_copy_sources() -> list[str]:
-    return re.findall(r"^COPY\s+(\S+)", _DOCKERFILE.read_text(encoding="utf-8"), re.M)
+    return re.findall(r"^COPY\s+(\S+)", _DOCKERFILE.read_text(encoding="utf-8"), re.MULTILINE)
 
 
 def test_dockerignore_excludes_secret_and_bulk_paths():
@@ -135,7 +135,7 @@ def test_dockerignore_does_not_exclude_copy_sources():
             f"COPY 源 {src} 被 .dockerignore 排除——镜像内容将缺失（白名单语义被破坏）"
         # 顶级排除目录也不得是 COPY 源的父级（如误排 app 会吞掉 COPY app ./app）
         for p in patterns:
-            if p.startswith("**/") or p.startswith("!") or "*" in p:
+            if p.startswith(("**/", "!")) or "*" in p:
                 continue   # 通配排除只命中原名匹配已单独查过的场景，父级误吞风险极低
             if (p.endswith("/") and src.startswith(p)) or src.startswith(p + "/"):
                 raise AssertionError(f"COPY 源 {src} 落在排除目录 {p} 下——镜像内容将缺失")

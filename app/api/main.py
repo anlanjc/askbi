@@ -263,10 +263,10 @@ async def ask(body: AskRequest, request: Request):
     # setdefault 式占用：已在途 → 409。占用放响应返回前的最后一步——从 aget_state
     # 返回到这里全部同步无 await（单事件循环内不存在插队窗口），create() 等先行步骤
     # 抛错时也不会留下无 gen 兜底释放的孤儿标记。
-    if body.resume and suspend_on:
-        if not get_task_store().acquire_thread_resume(body.thread_id):
-            raise HTTPException(status_code=409,
-                                detail="该 thread 的澄清已在恢复中，请勿重复提交")
+    if (body.resume and suspend_on
+            and not get_task_store().acquire_thread_resume(body.thread_id)):
+        raise HTTPException(status_code=409,
+                            detail="该 thread 的澄清已在恢复中，请勿重复提交")
     return StreamingResponse(
         gen(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

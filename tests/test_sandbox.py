@@ -99,7 +99,6 @@ async def test_cancel_path_interrupts_worker_before_close(monkeypatch):
             if not self._wake.wait(timeout=10):
                 raise AssertionError("查询未被 interrupt 打断（等待超时）")
             self.events.append("query_end")
-            return None
 
         def interrupt(self):
             self.events.append("interrupt")

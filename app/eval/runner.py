@@ -29,6 +29,28 @@ from ..data.sandbox import execute_sync
 
 DATASET = Path(__file__).resolve().parent.parent.parent / "eval" / "dataset.json"
 
+# --dataset 具名别名（[1B4-AB] 任务一）：v3 等短名 → 评测集路径；未命中的值按路径处理
+# （向后兼容：--dataset eval/dataset_v2_140.json 等既有用法逐字不变，缺省仍为 v1 回归集）。
+DATASET_ALIASES: dict[str, str | None] = {
+    "v1": None,  # 默认 v1 回归集（33 条 smoke）
+    "v2": "eval/dataset_v2.json",
+    "v2_140": "eval/dataset_v2_140.json",
+    "v3": "eval/dataset_v3_300.json",
+    "b": "eval/dataset_b.json",
+    "c": "eval/dataset_c.json",
+}
+
+
+def _resolve_dataset_arg(value: str) -> Path | None:
+    """--dataset 参数解析：具名别名 → 项目根相对路径；其余按路径（相对/绝对）处理。
+
+    v1 别名与缺省一样返回 None（走 DATASET 默认路径），报告标签保持历史口径。
+    """
+    if value in DATASET_ALIASES:
+        rel = DATASET_ALIASES[value]
+        return None if rel is None else Path(__file__).resolve().parent.parent.parent / rel
+    return Path(value)
+
 
 def _canonical(rows: list[list], columns: list[str]) -> list[tuple]:
     out = []
@@ -229,13 +251,13 @@ async def main():
     ap.add_argument("--only", choices=["query", "refusal", "clarify", "drill"], default=None)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--dataset", type=str, default=None,
-                    help="评测集路径（相对项目根或绝对），缺省 v1 回归集")
+                    help="评测集：具名别名（v1/v2/v2_140/v3/b/c）或路径（相对项目根或绝对），缺省 v1 回归集")
     ap.add_argument("--split", type=str, default=None,
                     help="只跑标记 split 的条目（如 holdout），缺省全部")
     args = ap.parse_args()
 
     settings = get_settings()
-    dataset_path = Path(args.dataset) if args.dataset else None
+    dataset_path = _resolve_dataset_arg(args.dataset) if args.dataset else None
     parts = [settings.llm_provider]
     if dataset_path:
         parts.append(dataset_path.stem)

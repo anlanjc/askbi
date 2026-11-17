@@ -265,6 +265,14 @@ async def ask(body: AskRequest, request: Request):
     # 抛错时也不会留下无 gen 兜底释放的孤儿标记。
     if (body.resume and suspend_on
             and not get_task_store().acquire_thread_resume(body.thread_id)):
+        # RT2-1（红队 round 2，[1B4-AB]）：409 拒绝路径必须先给本次 create 的任务落
+        # 终态再拒绝——create 先于 acquire（保持 ASKBI-7 的无 await 占用窗口），拒绝时
+        # 若无兜底，任务永久滞留 running 且永不被 _evict_if_over 淘汰（running 不可
+        # 淘汰）→ 任务列表/内存索引泄漏。
+        get_task_store().finish_if_running(
+            task["id"], {"kind": "aborted", "message": "resume 并发冲突被拒绝（409）"},
+            {}, [], (time.perf_counter() - t0) * 1000,
+        )
         raise HTTPException(status_code=409,
                             detail="该 thread 的澄清已在恢复中，请勿重复提交")
     return StreamingResponse(
@@ -285,7 +293,7 @@ async def list_tasks(request: Request):
 
 
 @app.get("/api/export")
-async def export_csv(task_id: str, request: Request):
+async def export_csv(request: Request, task_id: str = Query(min_length=1, max_length=200)):
     """把一次问答的答案表导出 CSV（BOM+元信息+SQL 口径+数据表，Excel 直开）。"""
     t = get_task_store().get(task_id)
     if not t:

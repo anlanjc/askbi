@@ -10,15 +10,17 @@ from pydantic import BaseModel, Field
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
     role: Literal["boss", "south", "north"] = "boss"
-    session_id: str = ""   # 多轮指代消解用；留空视为独立单轮
-    thread_id: str = ""    # E4② 澄清挂起：同 thread 恢复；留空自动用 task id
+    # RT2-2（红队 round 2）：自由长度 id 曾直达 checkpointer 键/属主注册表/JSONL 落盘
+    # 面——200 上限与 question 上限同哲学（合法会话标识远短于此）。
+    session_id: str = Field(default="", max_length=200)   # 多轮指代消解用；留空视为独立单轮
+    thread_id: str = Field(default="", max_length=200)    # E4② 澄清挂起：同 thread 恢复；留空自动用 task id
     resume: bool = False   # True 时 question 视为对挂起澄清的回答（Command(resume)）
     # 留空则由预算路由自动决定；显式传入可覆盖（评测用）
     depth: Literal["", "light", "full"] = ""
 
 
 class FeedbackRequest(BaseModel):
-    task_id: str = Field(min_length=1)
+    task_id: str = Field(min_length=1, max_length=200)
     value: Literal["up", "down"]
     comment: str = Field(default="", max_length=200)
 

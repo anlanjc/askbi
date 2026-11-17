@@ -3,7 +3,7 @@
 > 对标腾讯云 ChatBI / 阿里瓴羊智能小Q 的多 Agent 对话式经营分析系统
 > **NL2DSL2SQL 受控查询 · 数值确定性 · 合规质检闭环 · 可判对错的评测**
 
-[![CI](https://github.com/anlanjc/askbi/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/askbi/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-313%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
+[![CI](https://github.com/anlanjc/askbi/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/askbi/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-366%20passed-brightgreen)]() [![eval](https://img.shields.io/badge/mock_eval_v2-116%2F116-brightgreen)]() [![fault_injection](https://img.shields.io/badge/fault_injection-6%20场景零崩溃-blue)]() [![python](https://img.shields.io/badge/python-3.12-blue)]() [![langgraph](https://img.shields.io/badge/orchestration-LangGraph-orange)]()
 
 ## 架构总览
 
@@ -165,7 +165,7 @@ app/
 ├── api/        # FastAPI：SSE 流式 / 任务回放 / token 看板 / 管理面(审计+配置+清除) / 静态托管
 └── eval/       # 评测 runner + 消融
 web/index.html  # 问数工作台（原生JS，无构建）
-tests/          # 313 项测试（实跑口径，单一出处=EVIDENCE.md §4）：守卫/编译/解析/端到端/API/QA/缓存/消解/注册表(三源)/导出/审计/属主隔离/红队攻击面
+tests/          # 366 项测试（实跑口径，单一出处=EVIDENCE.md §4）：守卫/编译/解析/端到端/API/QA/缓存/消解/注册表(四源)/导出/审计/属主隔离/红队攻击面 round1+2
 ```
 
 ## 文档

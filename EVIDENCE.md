@@ -37,6 +37,8 @@
 | 多轮 | 30 条 64 轮 | mock **100%**（AB-2 口径）；real **24/30 条目、57/64 轮=89.1%**（10-29，221,065 token）：**机制场景全绿**——指代消解 16/17+时间追问 6/6+组合 3/3+缓存复问 10/10（命中 4/4）+澄清流 4/4+行级权限多轮 6/6+无上下文 1/1；失败 7 轮全在**边界探针**（fallback/词表边界/多实体守卫——mock 期望编码 mock 的保守规则，真实模型边界判断不同，属预期差异非机制缺陷） | evidence/multiturn_report_real.md |
 | **多数据源 B（AB-3）** | B 集 26 条（18 query/3 归因/2 澄清/3 拒答，咖啡域） | mock **100%**（26/26，DATASET=coffee 全链路落 B 库）；金标由 compile_sql(spec=coffee) 生成+构建期自检 | 语义层解耦实证；同问题多源 SQL/结果不同、缓存互不命中 |
 | **多数据源 C（11-05）** | C 集 26 条（18 query/3 归因/2 澄清/3 拒答，B2B SaaS 订阅域） | mock **100%**（26/26，DATASET=saas 全链路落 C 库，data/askbi_c.duckdb ~1.5 万账单）；金标由 compile_sql(spec=saas) 生成+构建期自检——**自检真抓出 1 条**：tier 词表"档位"首词命中顺序导致"各套餐档位"混入 plan 维，长词前置修复 | 三源三套物理模型（订单/小票/账单）证编译器只依赖 spec；drill 分解维度随 spec.drill_dims |
+| **评测 v3 扩容（[1B4-AB] 任务一，11-17）** | v3 300 条（148 冻结逐字保留 + 新增 152：96 query/19 归因/19 澄清/18 拒答，配比实读 v2_140 分布取整） | mock **100%**（300/300 首跑，`--dataset v3` 具名别名）；冻结旧集回归复现 v1 33/33 · v2_140 148/148 · B 26/26 · C 26/26 均 100% | 金标由 compile_sql 生成；构建期自检升级三重（query mock 重答 LIMIT 剥离口径防并列截断翻转 + clarify/refusal clarifier 实判 + drill 解析+heavy 路由断言）；探针-定稿修正 4 类措辞/口径问题（详见提交 askbi-11），冻结评测集文件 md5 批前后零变化 |
+| **多数据源 D hotel（[1B4-AB] 任务二，11-17）** | D 集 26 条（18 query/3 归因/2 澄清/3 拒答，连锁酒店酒旅域） | mock **100%**（26/26，DATASET=hotel 全链路落 D 库，data/askbi_d.duckdb ~1.2 万预订单/住宿行）；金标由 compile_sql(spec=hotel) 生成+构建期自检（LIMIT 剥离口径+drill heavy 断言+clarifier 实判） | 四源四套物理模型（订单/小票/账单/**预订单+住宿行按间夜计量**）证编译器只依赖 spec；few-shot 样例按 spec 标签隔离复用 AB-3 机制（seed +8 条 hotel 标签，tests/test_rag_isolation.py 9 项双向守门） |
 | 故障注入 | 6 场景 ×10 | 零崩溃，全部诚实降级 | evidence/fault_injection.md |
 | 压测（进程内） | 12 点位矩阵 | 编排上限 110-124 QPS；300ms 模拟延迟下 P50≈1.2s≈4×LLM（10-28 存档，11-05 同日复测 ±4% 内复现） | evidence/load_test.md |
 | **压测（HTTP 全栈双口径）** | 22 点位（进程内 vs uvicorn 真进程 SSE 全链，11-05） | c=1 差值法附加开销 **5.1ms**（框架地板 3.9ms + SSE 净附加 ≈1.2ms）；delay=300ms 下 HTTP≈进程内 **0.92~0.97×**（瓶颈=LLM 串行调用，框架被摊薄）；delay=0 高并发 0.53× 系**共址 CPU 争抢伪影**（诚实标注）；缓存收益随瓶颈位置变化（c=1 +36% / 高并发 +3~4%） | evidence/load_test_http.md |
@@ -55,6 +57,7 @@ python -m pytest -q                        # 313 项（测试数单一出处=本
 LLM_PROVIDER=mock python scripts/run_eval.py                          # v1 smoke 33
 LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_v2.json   # v2 116
 LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_v2.json --split holdout
+LLM_PROVIDER=mock python scripts/run_eval.py --dataset v3               # v3 扩容 300（[1B4-AB]，具名别名）
 python scripts/build_dataset_v2.py --check   # 金标自检（可重建评测集）
 python scripts/run_multiturn_eval.py         # 多轮 30 条（PROFILE=full 内部处理）
 python scripts/fault_inject.py --n 10        # 故障注入 → evidence/fault_injection.md
@@ -79,6 +82,11 @@ python scripts/gen_data_c.py                 # 生成 C 库（~1.5 万账单明�
 DATASET=saas LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_c.json     # C 集 26 条
 python scripts/build_dataset_c.py --check    # C 金标自检（compile_sql(spec=saas) 同源）
 
+# 第四数据源（[1B4-AB] 任务二：连锁酒店酒旅，同 DATASET 机制）
+python scripts/gen_data_d.py                 # 生成 D 库（~1.2 万预订单/住宿行，种子 42，三业务故事可归因）
+DATASET=hotel LLM_PROVIDER=mock python scripts/run_eval.py --dataset eval/dataset_d.json    # D 集 26 条
+python scripts/build_dataset_d.py --check    # D 金标自检（compile_sql(spec=hotel) 同源）
+
 # 真模型（需 DashScope key 于 .env；系统代理半死时先 NO_PROXY）
 LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset_v2.json
 ```
@@ -88,10 +96,10 @@ LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset
 - 评测是 mock 可判定集（措辞对齐解析器词表），真实模型泛化上限由 real 报告的失败明细界定；holdout 13 条不参与调参。
 - 多轮 followup 的渠道词表已收敛到 DIMENSION_VALUES 单一来源；"换成 X 渠道"重复后缀 bug 已修复（AB-2 评审发现）。
 - clarify_suspend 需 API 层 thread_id/resume（图内 run_ask 不挂起）——多轮评测脚本按此适配（ADR 见 docs/multiturn_adr.md）。
-- 第二/第三数据源适配器已落地（registry_adr.md）：B/C 数据集共享全局 ROLE_SCOPES（同一大区划分）；RAG 样例库已按数据集隔离（S9-OPT2/3b2becd 落地：seed 条目带 spec 标签，get_example_store(dataset) 只装载同标签样例，跨源 few-shot 不再串扰，tests/test_rag_isolation.py 7 项金标守门）；多轮指代消解词表仍取默认数据集（followup 默认关闭，边界如实声明）。
+- 第二/第三/第四数据源适配器已落地（registry_adr.md）：B/C/D 数据集共享全局 ROLE_SCOPES（同一大区划分）；RAG 样例库已按数据集隔离（S9-OPT2/3b2becd 落地：seed 条目带 spec 标签，get_example_store(dataset) 只装载同标签样例，跨源 few-shot 不再串扰，tests/test_rag_isolation.py 9 项金标守门——[1B4-AB] 第四源 hotel 双向覆盖扩充）；多轮指代消解词表仍取默认数据集（followup 默认关闭，边界如实声明）。
 - 管理面审计日志（11-05）："同事务"语义由 JSONL 翻译实现——变更与审计同锁窗口落盘、审计写失败变更回滚（app/audit.py 模块头有完整推导）；任务清除的归档改名假定单 worker 部署口径，多 worker 管理面属 PRODUCTION_GAP；ADMIN_TOKEN 留空=开放但全审计（与 api_key 同哲学）。
 - HTTP 全栈压测（11-05）：客户端与 uvicorn 同机共址，delay=0 高并发点位 QPS 受 CPU 争抢压制（0.53×），**不当服务端容量上限使用**；delay=300ms（真实形态近似）下 0.92~0.97× 才是部署参考口径。
-- 下一步：200+ 条评测集（v2_140 148 条已落地）、真实部署与灰度。
+- 下一步：200+ 条评测集（v3 300 条已落地，[1B4-AB] 任务一）、真实部署与灰度。
 
 ## 7. 安全纵深批次（AB-HR，2026-11-09，任务卡 HANDOFF_askbi-hardening.md）
 
@@ -125,3 +133,10 @@ LLM_PROVIDER=openai_compatible python scripts/run_eval.py --dataset eval/dataset
 - **回归 7 项**（tests/test_cache.py 18→25，TDD 先红后绿）：单测 6（leader 竞选+等待者共享、超时 fail-open、失败重竞选恰一名接棒、快路径命中、禁用态零 flight、等待上界默认取自 settings）+ e2e 1（mock 全图两路并发同问：修复前实测红 calls==2 两路都执行沙箱；修复后沙箱只执行一次、第二路 from_cache=true + cache_hit(shared=true)）。
 
 **终态（本批提交实跑）**：pytest **289 绿**（HEAD 实收 282 + 本批 7；§4 的 268 为陈旧口径漂移，ASKBI-5 清账收口）；ruff 全绿；mock 评测五套 100%——v1 33/33、v2 116/116、v2_140 **148/148**、B 集 26/26（DATASET=coffee）、C 集 26/26（DATASET=saas）；冻结评测集 md5 批前后逐一相同。
+
+## 10. [1B4] W2 车道批（[1B4-AB]，2026-11-17/18，四任务串行）
+
+基线 HEAD=8da9d48（313 绿 + ruff 清），一任务一提交（askbi-11 起），全程显式 `LLM_PROVIDER=mock`、未 push、冻结评测集旧文件零字节改动（md5 批前后逐一相同）、路径限定 add。
+
+- **任务一 评测 v3 扩容 148→300**（askbi-11，97aeea6）：`eval/dataset_v3_300.json` = 冻结 v2_140 148 条逐 dict 相等保留 + 新增 152 条（ids v3-149..v3-300，batch=1B4-AB-v3-expansion），配比实读现有分布定（v2_140 query 62.8%/drill 12.2%/clarify 12.8%/refusal 12.2% → 新增 96/19/19/18）；`scripts/build_dataset_v3_300.py` 金标一律 compile_sql 生成 + 构建期自检升级三重（①query mock 重答同库比对改 **LIMIT 剥离口径**——分组行数 > LIMIT 时截断在并列值边界执行间非确定，同 SQL 跑两次尾行都可能翻，实测复现后才改；②clarify/refusal 用 mock clarifier 实判 verdict；③drill 断言解析合法 + heavy 路由——drill 判分依赖 full 链路）；runner `--dataset` 支持具名别名 v1/v2/v2_140/v3/b/c（未命中按路径处理，向后兼容）。**首跑 300/300=100%**；探针-定稿修正 4 类问题（按已验证句式修期望不修码）：『全部时间内各渠道退货率』值提取把"间内"当渠道值 /『下个季度』≠拒答关键词『下季度』/ 省份×渠道=110、城市×品类=138 超 LIMIT 100 截断边界 → 换 ≤100 组的维度组合 / 多维金标 dims 顺序对齐解析器 dim_keywords 遍历序。回归复现：v1 33/33、v2_140 148/148、B 26/26、C 26/26 均 100%（再生报告已还原保持树净）。
+- **任务二 第四数据源 hotel（连锁酒店酒旅）**（askbi-12）：领域选型实读三既有源 spec 结构后取**语义距离最大**的酒旅域——电商订单行/咖啡小票行/SaaS 账单行都按"件/席位"计量，hotel 按**"间夜"计量**（房间数×晚数），且带可空宾客登记（coffee member_id 形态的第四种事实形态）。`app/data/dataset_d.py`（HOTEL_SPEC：7 指标含 ADR/间夜数/入住宾客数 + hotel_type/room_type 维度白名单）+ `app/data/generator_d.py`（60 酒店 × 24 个月 ~1.2 万预订单/1.3 万住宿行，≥30 行远超；三业务故事：度假占比逐月上升/旅行社渠道毛利率系统性低于直销（渠道价 0.88）/暑期旺季·国庆放量·冬季淡季）+ `scripts/gen_data_d.py`；registry reset_specs/_ensure_builtins 接线 hotel、config 注释同步。金标 26 条（18/3/2/3 对照 B/C 结构）由 `scripts/build_dataset_d.py` 生成（compile_sql(spec=hotel) + 三重自检，探针一次通过）；DATASET=hotel 跑通 **26/26=100%**（eval/report_mock_dataset_d.md）。few-shot 样例按 spec 标签隔离复用 AB-3 机制：seed_examples.json 追加 8 条 hotel 标签（既有字节零改动，git diff 仅闭合括号 1 行）；隔离测试扩充 tests/test_rag_isolation.py 7→9 项（hotel 库检索不到他源样例 + 任一既有源检索不到 hotel 样例，双向）；tests/test_hotel_dataset.py 新增 10 项（注册表/编译器标识符/跨源拒编译/mock 词表/缓存指纹隔离/版本探测/全链路 answer+drill）；README 多数据源节四源表+EVIDENCE §4 两行+复现命令同步。

@@ -39,7 +39,7 @@ def test_rag_isolation_gap_claim_is_closed():
     for name in ("EVIDENCE.md", "docs/registry_adr.md"):
         text = (_ROOT / name).read_text(encoding="utf-8")
         assert "未按数据集隔离" not in text, \
-            f"{name} 仍宣称 RAG 样例库未按数据集隔离——该缺口已收口（tests/test_rag_isolation.py 7 项守门）"
+            f"{name} 仍宣称 RAG 样例库未按数据集隔离——该缺口已收口（tests/test_rag_isolation.py 9 项守门）"
 
 
 def test_ablation_label_matches_archive_sample_size():

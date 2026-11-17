@@ -122,9 +122,11 @@ def reset_specs() -> None:
     _SPECS["ecommerce"] = DEFAULT_SPEC
     from .dataset_b import COFFEE_SPEC
     from .dataset_c import SAAS_SPEC
+    from .dataset_d import HOTEL_SPEC
 
     _SPECS["coffee"] = COFFEE_SPEC
     _SPECS["saas"] = SAAS_SPEC
+    _SPECS["hotel"] = HOTEL_SPEC
     _BUILTINS_LOADED = True
 
 
@@ -134,6 +136,7 @@ def _ensure_builtins() -> None:
         from . import (
             dataset_b,  # noqa: F401  导入即自注册 coffee
             dataset_c,  # noqa: F401  导入即自注册 saas
+            dataset_d,  # noqa: F401  导入即自注册 hotel（[1B4-AB] 第四数据源）
         )
 
         _BUILTINS_LOADED = True

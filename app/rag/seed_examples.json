@@ -397,5 +397,179 @@
       },
       "limit": 12
     }
+  },
+  {
+    "question": "上个月房费收入是多少",
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "room_revenue",
+      "dimensions": [],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "room_revenue",
+        "direction": "desc"
+      },
+      "limit": 5
+    },
+    "spec": "hotel"
+  },
+  {
+    "question": "最近3个月各渠道房费收入",
+    "dsl": {
+      "intent": "breakdown",
+      "metric": "room_revenue",
+      "dimensions": [
+        "channel"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 3
+      },
+      "order_by": {
+        "metric": "room_revenue",
+        "direction": "desc"
+      },
+      "limit": 20
+    },
+    "spec": "hotel"
+  },
+  {
+    "question": "上月哪个店型毛利率最低",
+    "dsl": {
+      "intent": "topn",
+      "metric": "gross_margin_rate",
+      "dimensions": [
+        "hotel_type"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "gross_margin_rate",
+        "direction": "asc"
+      },
+      "limit": null
+    },
+    "spec": "hotel"
+  },
+  {
+    "question": "近12个月房费收入趋势",
+    "dsl": {
+      "intent": "trend",
+      "metric": "room_revenue",
+      "dimensions": [
+        "month"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 12
+      },
+      "order_by": {
+        "metric": "room_revenue",
+        "direction": "desc"
+      },
+      "limit": 12
+    },
+    "spec": "hotel"
+  },
+  {
+    "question": "华南地区上月预订单数",
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "booking_count",
+      "dimensions": [],
+      "filters": [
+        {
+          "field": "region",
+          "op": "=",
+          "value": "华南"
+        }
+      ],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "booking_count",
+        "direction": "desc"
+      },
+      "limit": 5
+    },
+    "spec": "hotel"
+  },
+  {
+    "question": "各房型最近6个月的平均房价",
+    "dsl": {
+      "intent": "breakdown",
+      "metric": "adr",
+      "dimensions": [
+        "room_type"
+      ],
+      "filters": [],
+      "time": {
+        "mode": "last_n_months",
+        "n": 6
+      },
+      "order_by": {
+        "metric": "adr",
+        "direction": "desc"
+      },
+      "limit": 20
+    },
+    "spec": "hotel"
+  },
+  {
+    "question": "度假店型上月间夜数",
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "room_nights",
+      "dimensions": [],
+      "filters": [
+        {
+          "field": "hotel_type",
+          "op": "=",
+          "value": "度假"
+        }
+      ],
+      "time": {
+        "mode": "last_n_months",
+        "n": 1
+      },
+      "order_by": {
+        "metric": "room_nights",
+        "direction": "desc"
+      },
+      "limit": 5
+    },
+    "spec": "hotel"
+  },
+  {
+    "question": "2025年1月到6月的房费收入",
+    "dsl": {
+      "intent": "aggregate",
+      "metric": "room_revenue",
+      "dimensions": [],
+      "filters": [],
+      "time": {
+        "mode": "between",
+        "start": "2025-01",
+        "end": "2025-06"
+      },
+      "order_by": {
+        "metric": "room_revenue",
+        "direction": "desc"
+      },
+      "limit": 5
+    },
+    "spec": "hotel"
   }
-]
+  ]
+

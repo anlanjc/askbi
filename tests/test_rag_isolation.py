@@ -86,6 +86,33 @@ def test_ecommerce_store_never_returns_coffee_saas_examples():
             assert q not in cross, probe
 
 
+# ---------------- 跨源隔离：第四数据源 hotel（[1B4-AB] 任务二，AB-3 机制复用） ----------------
+
+
+def test_hotel_store_never_returns_other_examples():
+    """DATASET=hotel：hotel 样例库不含任何他源样例；他源问题探针检索不到他源样例。"""
+    store = get_example_store("hotel")
+    others = {i["question"] for i in _seeds() if i["spec"] != "hotel"}
+    assert others, "前置失效：seed 中应存在他源样例，否则本测试无判别力"
+    assert store.size() == len([i for i in _seeds() if i["spec"] == "hotel"]) > 0
+    assert not (_store_questions(store) & others)
+    for probe in others:  # 逐条他源问题探针：检索结果必须全部来自 hotel 样例
+        for q, _dsl, _s in store.search(probe, k=3):
+            assert q not in others, probe
+
+
+def test_other_stores_never_return_hotel_examples():
+    """反之亦然：任一既有源样例库不含 hotel 样例（新增 D seed 不回流 A/B/C）。"""
+    hotel_qs = {i["question"] for i in _seeds() if i["spec"] == "hotel"}
+    assert hotel_qs, "前置失效：seed 中应存在 hotel 样例，否则本测试无判别力"
+    for ds in ("ecommerce", "coffee", "saas"):
+        store = get_example_store(ds)
+        assert not (_store_questions(store) & hotel_qs)
+        for probe in hotel_qs:
+            for q, _dsl, _s in store.search(probe, k=3):
+                assert q not in hotel_qs, (ds, probe)
+
+
 # ---------------- 默认数据集行为零变化 ----------------
 
 

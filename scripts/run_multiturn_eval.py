@@ -55,11 +55,21 @@ DATASET = ROOT / "eval" / "dataset_v2_followup.json"
 DEFAULT_REPORT = ROOT.parent / "evidence" / "multiturn_report.md"
 
 
-def load_dataset() -> list[dict]:
-    data = json.loads(DATASET.read_text(encoding="utf-8"))
-    items = data["items"]
-    if len(items) != 30:
-        raise SystemExit(f"评测集应为 30 条，实际 {len(items)} 条：{DATASET}")
+def load_dataset(path: Path) -> list[dict]:
+    """加载评测集：.json（{"items":[...]}）或 .jsonl（每行一条会话）。
+
+    条目数断言只约束默认的 v2 追加集（历史口径钉死 30 条）；外部数据集
+    （如 [1B4-AB] multiturn_deep.jsonl）按文件实际条数跑。
+    """
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".jsonl":
+        # 每行一条会话；跳过元信息行（无 id/turns 的行，如首行 _note）
+        items = [json.loads(ln) for ln in text.splitlines() if ln.strip()]
+        items = [i for i in items if isinstance(i, dict) and i.get("id") and i.get("turns")]
+    else:
+        items = json.loads(text)["items"]
+    if path == DATASET and len(items) != 30:
+        raise SystemExit(f"评测集应为 30 条，实际 {len(items)} 条：{path}")
     return items
 
 
@@ -76,8 +86,12 @@ async def run_turn(turn: dict, item: dict, sid: str, graph, settings) -> dict:
     if item.get("suspend"):
         # langgraph 会原地改写 config dict——每次 astream 都新建（tests/test_clarify_suspend 实测踩坑）
         cfg = {"configurable": {"thread_id": sid}}
+        # [1B4-AB] 任务四修复：非 resume 轮的 payload 必须与 API 同构携带 depth=""
+        # （AskRequest 默认值）——曾漏传该键，thread 的 depth 通道保留上一轮路由值，
+        # 挂起 thread 上的后续新问题被首轮路由冻结（light 后再问"为什么…"也走轻量
+        # 链路，叙述与 QA 永不产出）。API 每请求都显式带 depth，评测装置漂移当日修。
         payload = Command(resume=question) if turn.get("resume") else {
-            "question": question, "role": role, "events": [], "usage": {}}
+            "question": question, "role": role, "depth": "", "events": [], "usage": {}}
         last: dict = {}
         async for chunk in graph.astream(payload, config=cfg, stream_mode="updates"):
             if "__interrupt__" in chunk:
@@ -135,9 +149,10 @@ def judge_turn(r: dict, turn: dict) -> tuple[bool, str]:
     return True, ""
 
 
-async def run(only: str | None) -> dict:
+async def run(only: str | None, dataset_path: Path | None = None) -> dict:
     settings = get_settings()
-    items = [i for i in load_dataset() if not only or i["scenario"] == only]
+    ds_abs = (dataset_path or DATASET).resolve()
+    items = [i for i in load_dataset(ds_abs) if not only or i["scenario"] == only]
     cache = get_query_cache()
     ctx = get_session_context()
 
@@ -187,7 +202,7 @@ async def run(only: str | None) -> dict:
     lat = [r["elapsed_ms"] for r in results]
     summary = {
         "provider": settings.llm_provider, "profile": settings.profile,
-        "dataset": "eval/dataset_v2_followup.json",
+        "dataset": ds_abs.relative_to(ROOT).as_posix() if ds_abs.is_relative_to(ROOT) else ds_abs.name,
         "only": only, "items": items_all, "items_all_correct": ok_items,
         "turns": turns, "turn_accuracy": ok_turns / max(1, turns),
         "by_scenario": by_scenario, "cache_hit_turns": cache_hits,
@@ -201,7 +216,7 @@ async def run(only: str | None) -> dict:
 
 def write_report(s: dict, path: Path) -> None:
     lines = [
-        f"# AskBI 多轮评测报告（eval v2 追加集 · {s['provider']}）",
+        f"# AskBI 多轮评测报告（{s['dataset']} · {s['provider']}）",
         "",
         f"- 评测集：`{s['dataset']}`" + (f"（--only {s['only']}）" if s["only"] else ""),
         f"- 环境：provider={s['provider']}"
@@ -234,15 +249,24 @@ def write_report(s: dict, path: Path) -> None:
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default=None, help="只跑某 scenario（如 cache_repeat）")
-    ap.add_argument("--out", default=str(DEFAULT_REPORT), help="报告输出路径")
+    ap.add_argument("--dataset", default=None,
+                    help="评测集路径（.json 或 .jsonl），缺省 eval/dataset_v2_followup.json（30 条口径）")
+    ap.add_argument("--out", default=None, help="报告输出路径，缺省随 --dataset 推导")
     args = ap.parse_args()
+
+    dataset_path = Path(args.dataset) if args.dataset else DATASET
+    if args.out:
+        out = Path(args.out)
+    elif dataset_path == DATASET:
+        out = DEFAULT_REPORT
+    else:
+        out = ROOT / "evidence" / f"multiturn_{dataset_path.stem}_report.md"
 
     if not get_settings().db_abs_path.exists():
         raise SystemExit(f"数据文件缺失：{get_settings().db_abs_path}（先运行 python scripts/gen_data.py）")
 
-    print(f"多轮评测开始：{get_settings().llm_provider} / PROFILE={get_settings().profile} / dataset={DATASET.name}")
-    summary = await run(args.only)
-    out = Path(args.out)
+    print(f"多轮评测开始：{get_settings().llm_provider} / PROFILE={get_settings().profile} / dataset={dataset_path.name}")
+    summary = await run(args.only, dataset_path)
     write_report(summary, out)
     acc = summary["turn_accuracy"]
     print(f"\n条目全对 {summary['items_all_correct']}/{summary['items']} · "

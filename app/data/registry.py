@@ -153,3 +153,24 @@ def get_spec(name: str | None = None) -> DatasetSpec:
             f"未知数据集: {key}（已注册: {sorted(_SPECS)}）。"
             "新数据集需在 app/data/ 下定义并 register_spec 自注册。"
         ) from None
+
+
+def spec_for_db(db_path: str | Path) -> DatasetSpec | None:
+    """按库路径反查 spec；找不到返回 None（调用方回退 settings.dataset 对应 spec）。
+
+    用途（[1B5] 沙箱 AST 表白名单）：guard 需要知道"在哪个库上执行，就用哪个
+    spec 声明的表集合"。评测判分库（runner 按数据集传库路径）、脚本直连
+    （scripts/build_dataset_*.py 传 spec 库路径）、测试注册的
+    replace(spec, db_path=...) 变体都通过这里对齐；默认数据集路径缺省时
+    逐字节兼容（DEFAULT_SPEC.db_abs_path == settings.db_abs_path 恒命中）。
+    """
+    target = Path(db_path)
+    try:
+        resolved = target.resolve()
+    except OSError:  # 极端盘符/权限下 resolve 失败：退化为字面比较
+        resolved = None
+    for spec in _SPECS.values():
+        spec_path = spec.db_abs_path
+        if spec_path == target or (resolved is not None and spec_path.resolve() == resolved):
+            return spec
+    return None

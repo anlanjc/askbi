@@ -9,6 +9,11 @@ langgraph>=0.2.60
 # storage / compute
 duckdb>=1.0
 numpy>=1.26
+# [1B5] SQL 守卫解析级 AST 白名单（app/data/sandbox.py）：duckdb 方言解析 +
+# 语句类型/函数/表白名单。下界 30：守卫依赖 30.x 解析产物形态（exp.SetOperation
+# 家族、ReadCSV/ReadParquet 专类等）；白名单含导入期自检（编译器产物必需键
+# 缺失即抛错），sqlglot 升级若漂移在启动期显式失败而非静默放行。
+sqlglot>=30
 # mcp
 # ASKBI-9（评审 4.0）：mcp.server.mcpserver 仅 2.x 存在（1.x 只有 fastmcp——
 # mcp 1.2.0 wheel 实测无 mcpserver 模块），下限曾 mcp>=1.2，按下限解析到

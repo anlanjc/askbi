@@ -21,7 +21,6 @@ import json
 import pathlib
 import re
 
-import duckdb
 import httpx
 import pytest
 from pydantic import ValidationError
@@ -227,10 +226,17 @@ async def test_sqli_time_blind_via_filter_value_is_inert(db_path):
     assert res.rows[0][0] is None           # 载荷未作为 SQL 执行
 
 
-def test_guard_passes_load_extension_but_engine_refuses(db_path):
-    """纵深证据：load_extension 不在黑名单（\b 不匹配下划线）但引擎层不存在该
-    函数且外部访问已禁——黑名单缺口的兜底是物理墙（见 redteam_report 观察项②）。"""
-    with pytest.raises(duckdb.Error):   # CatalogException：发行版无此函数
+def test_guard_rejects_load_extension_ast_layer(db_path):
+    """红队观察项②的历史收口（[1B5]）：load_extension 曾不在关键词黑名单
+    （\\b 不匹配下划线后缀），旧口径"guard 放行 → 引擎层 CatalogException 兜底"
+    ——AST 白名单层将该缺口结构性闭合：sqlglot 未建模的函数（Anonymous）一律
+    拒绝，load_extension 在守卫层即被拦，不再依赖"引擎无此函数"这一事实。
+    物理墙（enable_external_access=False）保持为最后防线（见 test_sandbox 引擎测试）。"""
+    from app.data.sandbox import SqlRejected, guard
+
+    with pytest.raises(SqlRejected, match="AST 白名单: 禁止函数 load_extension"):
+        guard("SELECT load_extension('evil')")
+    with pytest.raises(SqlRejected):
         execute_sync("SELECT load_extension('evil')", db_path)
 
 

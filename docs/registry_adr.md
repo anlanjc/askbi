@@ -51,5 +51,5 @@ AskBI 的核心卖点是"语义层受控"：LLM 只产 DSL，SQL 由编译器从
 ## 7. 已知边界（下一步）
 
 - **RAG 样例库已按数据集隔离**（S9-OPT2/3b2becd 收口，ASKBI-6 勘误）：seed 条目带 spec 标签，get_example_store(dataset) 只装载同标签样例——B/C 问题检索不到电商 few-shot；默认数据集样例库与改造前逐字节一致（tests/test_rag_isolation.py 7 项金标 pin 守门），chroma 后端 collection 同按数据集命名隔离。
-- **多轮指代消解词表仍取默认数据集**：context.py 的实体词表在模块导入时从全局 DIMENSION_VALUES 构建，B 数据集的多轮消解（"那外卖呢"）暂不支持——followup 本身默认关闭，边界如实声明。
+- **多轮指代消解词表已随激活 spec 走（[1B5] 收口，原边界解除）**：context.py 每次现算 `get_spec().dimension_values ∩ dimensions`（剔除路由值"全国"），切 DATASET 后跨源实体（"那外卖呢/那旗舰版呢/那度假呢"）随对应词表消解、双向隔离（coffee 词在 ecommerce 不命中，反之亦然）；默认 ecommerce 推导结果与旧硬编码逐项相同（改动前快照守门 + 字节级输出钉死，tests/test_followup_vocab_spec.py 13 项）。通用后缀词（店型/档位）未随 spec 扩展——裸实体形态可消解，后缀形态为遗留边界。
 - **评测集 B 全部 main split**：26 条用于多数据源回归验证，无调参流程故不设 holdout；扩大到 v2 同等规模时应引入分层。

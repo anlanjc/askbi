@@ -6,8 +6,11 @@
 2. 追问判定是**规则**：短句 + "那/换/呢"模式 + 不含指标关键词 → 追问。
    判不出来就当独立问题走原链路——误判方向被设计成"保守"（宁可当成新问题）。
 3. 实体替换用**同维度类型词表**：上轮问华南（region），这轮"那华北呢"→ 把上轮
-   问题里的 region 实体替换成华北。词表内置评测域（地区/渠道/品类），换域需补表
-   ——与 memomind 意图映射表同款的显式维护面（TAKEOVER 已列）。
+   问题里的 region 实体替换成华北。词表**收敛到激活 spec 单一来源**
+   （registry.get_spec → dimension_values ∩ dimensions，与 schema_prompt 展示的
+   取值域同构）：切 DATASET=coffee/saas/hotel 后消解随对应数据集词表走——
+   "那外卖呢"在 coffee 消解、在 ecommerce 不命中（跨源隔离是双向的）。
+   默认 ecommerce 的推导结果与旧硬编码（schema.DIMENSION_VALUES 四键）逐项相同。
 4. 开关 `followup_enabled` 默认 False：关闭时 resolve 直接原样返回，
    API 行为与无此模块完全一致（既有 57 项测试不动）。
 """
@@ -17,31 +20,53 @@ import re
 import threading
 from collections import OrderedDict
 
-from .data.schema import DIMENSION_VALUES
-
 # 指标关键词：出现即视为独立问题（不算追问）
 _METRIC_WORDS = ("销售额", "毛利率", "毛利额", "订单量", "客单价", "退货率",
                  "销量", "趋势", "多少", "排名", "前5", "前 5", "前3", "前 3")
 
-# 同维度类型实体词表：**收敛到 schema.DIMENSION_VALUES 单一来源**（AB-2 评审发现：
-# 原硬编码词表与数据集取值交集仅"直播"，"门店/电商/个护"等是假值，真实取值如
-# "搜索/推荐/社交/官网"反而不在表内）。"全国"是路由概念不是过滤取值，不进词表。
-_ENTITY_TYPES: dict[str, tuple[str, ...]] = {
-    "region": tuple(v for v in DIMENSION_VALUES["region"] if v != "全国"),
-    "channel": tuple(DIMENSION_VALUES["channel"]),
-    "category": tuple(DIMENSION_VALUES["category"]),
-    "member_level": tuple(DIMENSION_VALUES["member_level"]),
-}
-_ENTITY_TO_TYPE = {e: t for t, es in _ENTITY_TYPES.items() for e in es}
+# 路由概念值："全国"不是过滤取值，换入会产生非法过滤值——不进消解词表
+# （历史口径：旧实现仅对 region 剔除；现对全部键统一剔除，四源取值域均无此值，默认源逐项不变）
+_ROUTING_VALUES = frozenset({"全国"})
+
+# 通用后缀（AB-2 修复）：换入词根避免"搜索渠道渠道"式重复后缀
 _GENERIC_SUFFIX = re.compile(r"(渠道|品类|地区|会员)$")
 
 
-def _entity_type(entity: str) -> str | None:
+def _entity_vocab() -> dict[str, tuple[str, ...]]:
+    """同维度类型实体词表：**收敛到激活 spec 单一来源**（[1B5] 收口 EVIDENCE §6 边界）。
+
+    推导规则（与 schema_prompt 展示取值域同构）：只取 spec.dimensions 里声明了
+    取值域的维度（status 这类非分组维度的取值域不进词表），剔除路由概念值。
+    默认 ecommerce 推导结果与旧硬编码（schema.DIMENSION_VALUES 四键词表）逐项
+    相同——AB-2 词表收敛语义原样保留，只是取数来源随数据集走（tests/
+    test_followup_vocab_spec.py 以改动前快照守门）。
+
+    每次调用现算（≤5 键 × ≤7 值，微秒级，仅请求期/评测轮调用一次）：
+    换 DATASET / 测试注册 replace 变体即时生效，不引入缓存失效面。
+    """
+    # 延迟导入：registry 不反向依赖本模块
+    from .data.registry import get_spec
+
+    spec = get_spec()
+    return {
+        key: tuple(v for v in spec.dimension_values.get(key, ())
+                   if v not in _ROUTING_VALUES)
+        for key in spec.dimensions
+        if spec.dimension_values.get(key)
+    }
+
+
+def _entity_to_type(vocab: dict[str, tuple[str, ...]]) -> dict[str, str]:
+    """实体 → 维度类型倒排表（值跨维度重复时后声明维度的键胜出，与旧实现一致）。"""
+    return {e: t for t, es in vocab.items() for e in es}
+
+
+def _entity_type(entity: str, to_type: dict[str, str]) -> str | None:
     """实体 → 维度类型；剥离通用后缀（直播渠道→直播）后再查词表。"""
-    if entity in _ENTITY_TO_TYPE:
-        return _ENTITY_TO_TYPE[entity]
+    if entity in to_type:
+        return to_type[entity]
     stripped = _GENERIC_SUFFIX.sub("", entity)
-    return _ENTITY_TO_TYPE.get(stripped)
+    return to_type.get(stripped)
 
 # 追问句式：那X呢 / 换成X / 改成X / X呢（X 为已登记实体）
 # 实体用非贪婪 + 可选语气词后缀（呢/啊/吗），避免"电商呢"整个被吃进实体名
@@ -90,9 +115,10 @@ def is_followup(question: str) -> bool:
     q = question.strip()
     if len(q) > 16 or any(w in q for w in _METRIC_WORDS):
         return False
+    to_type = _entity_to_type(_entity_vocab())
     for pat in _FOLLOWUP_PATTERNS:
         m = pat.match(q)
-        if m and _entity_type(m.group("entity")):
+        if m and _entity_type(m.group("entity"), to_type):
             return True
     return False
 
@@ -110,16 +136,18 @@ def resolve_followup(question: str, last_question: str,
         return question, ""
     if not last_question:
         return question, "检测到追问但无上轮上下文，已按新问题处理"
+    vocab = _entity_vocab()
+    to_type = _entity_to_type(vocab)
     m = next((pm.match(question.strip()) for pm in _FOLLOWUP_PATTERNS
               if pm.match(question.strip())), None)
     if not m:
         return question, "检测到追问但句式未匹配，已按新问题处理"
     entity = m.group("entity")
-    etype = _entity_type(entity)
+    etype = _entity_type(entity, to_type)
     if not etype:
         return question, "检测到追问但实体不在词表内，已按新问题处理"
     # 上轮问题里找同类型旧实体
-    olds = [e for e in _ENTITY_TYPES[etype] if e in last_question and e != entity]
+    olds = [e for e in vocab[etype] if e in last_question and e != entity]
     if not olds:
         return question, "检测到追问但上轮无同类型实体可替换，已按新问题处理"
     if len(set(olds)) > 1:

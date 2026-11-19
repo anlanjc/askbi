@@ -98,6 +98,12 @@ _END_MONTH = "2026-09"
 
 MAX_LIMIT = 200
 
+# AB-7（评审 5.0，P1）：filters 数量上界。MCP/DSL 是客户端直达面——此前无上界，
+# 20k 个合法 filter 单项全部通过白名单校验，编译出 0.4MB SQL 直达沙箱（guard 同步
+# 解析实测 1277ms 冻结事件循环，drill_down ≤9 次 ≈11s 的 DoS 链入口）。
+# 上界 16 对现有四源全部合法 DSL（编译产物 810 条探针 + 冻结评测集金标）零影响。
+MAX_FILTERS = 16
+
 
 class OrderBy(BaseModel):
     metric: str  # 排序依据指标（通常是主指标）
@@ -108,7 +114,8 @@ class QueryDSL(BaseModel):
     intent: Literal["aggregate", "breakdown", "topn", "trend", "compare"] = "aggregate"
     metric: str
     dimensions: list[str] = Field(default_factory=list)
-    filters: list[Filter] = Field(default_factory=list)
+    # AB-7：filters 数量上界（校验层即拒，pydantic 422——DoS 链第一层收口）
+    filters: list[Filter] = Field(default_factory=list, max_length=MAX_FILTERS)
     time: TimeRange = Field(default_factory=TimeRange)
     order_by: OrderBy | None = None
     limit: int | None = None

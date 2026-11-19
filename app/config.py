@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -17,7 +18,10 @@ class Settings(BaseSettings):
 
     # 功能档位：conservative（默认）= 实验功能全关，行为可预测、可随时回滚；
     # full = 一键开启缓存/指代消解/澄清挂起（演示与个人使用），单开关仍可显式覆盖。
-    profile: str = "conservative"  # conservative | full
+    # AB-17（评审 5.0）：改 Literal 枚举启动期 fail-fast——此前 str 无校验，
+    # PROFILE=ful/production 这类拼错静默按 conservative 行为跑（无任何提示，
+    # 实验开关永远开不起来）。conservative/full 合法值行为零变化。
+    profile: Literal["conservative", "full"] = "conservative"
 
     # LLM
     llm_provider: str = "mock"  # mock | deepseek | openai_compatible

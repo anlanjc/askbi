@@ -73,3 +73,38 @@ executor 接线（nodes.py）：leader/超时方执行成功 → publish_flight�
 ### 8.4 禁用态与多 worker
 
 禁用态 claim 恒 ("leader", None)、不起 flight、不计数——与无缓存行为逐字一致（CACHE_ENABLED 默认 False 的零漂移原则不变）。多 worker（uvicorn --workers N）下单飞是进程内的，跨 worker 各自独立在飞——与 §7 跨进程边界同一条缝，属 PRODUCTION_GAP 高可用项。
+
+### 8.5 评审 5.0 增补（AB-1/AB-19，2026-11-20）：取消安全与等待者线程池占用反转
+
+复核实证两处缺陷：①leader 被取消（CancelledError=BaseException，`except Exception` 接不住）
+后 `_flights` 永久残留；②40 路并发同 key 时等待者各自 `to_thread(claim_flight)` 阻塞占满
+默认执行器（min(32, cpu+4) 线程），leader 自己的 claim/publish 反被排队饿死——40/40 超时
+fail-open、coalesced=0，单飞在最热 key 上成了可用性风险（与本节 8.3 的承诺相反）。
+
+修复（`register_flight`/`waiter_state`/`release_waiter` 三原语，全部纯内存、事件循环内直调）：
+
+| 原语 | 契约 |
+|---|---|
+| `register_flight(key)` | 登记段：→ ("leader", None) 取得执行权 / ("wait", flight) 等待者名额已占 / ("miss", None) 超名额上限直接 fail-open（计 singleflight_overflow） |
+| `waiter_state(key, flight)` | 等待段一步（持登记返回的 flight 引用）：("pending"/"flight"/"gone", result?)；"flight" 计 coalesced |
+| `release_waiter(key, flight?, timed_out?)` | 退出回收名额（精确按对象）；timed_out=True 计 singleflight_timeouts |
+
+- **持对象引用轮询是正确性关键**：publish 是"结果挂对象 → 写缓存 → 拆表"顺序，查表轮询会在
+  "结果已挂/表项已拆"的微秒窗口漏看终态、误判 gone 而重新竞选（40 路曾连环重执行 40 次）；
+  读对象则结果一经挂上必可读，拆表不影响。等待者在事件循环内 `asyncio.sleep` 轮询
+  （步长 50ms，nodes.py `_FLIGHT_POLL_SECONDS`），零线程占用；同步复合 `claim_flight`
+  保留 threading.Event 阻塞等待（脚本/评测/单测的线程语境，语义与两段式逐字一致）。
+- **等待者名额上限**（`max_flight_waiters`，默认 16）：等待者已不占线程池，上限只防极端
+  惊群的等待队列与超时风暴；超出者直接 fail-open（计 singleflight_overflow），名额随
+  _Flight 对象消亡、无泄漏面。
+- **leader 终态保障**（nodes.py executor_node）：claim→execute→publish 全链收进
+  try/finally，`is_leader` 时 finally 必调 `fail_flight`（幂等：publish 已拆 → no-op）；
+  fail_flight 纯内存、事件循环直调——取消路径不允许再 await。登记段无 await（get 的
+  IO 在 to_thread，登记在事件循环同步直调），不存在"取消落在登记与 is_leader 赋值之间"
+  的泄漏窗口。
+- **AB-19 版本闸探测异常 fail-open**：`_current_version` 对 `_version_provider` 异常返回
+  None 哨兵（绝不向上抛——duckdb 原文曾穿透成 SSE error 绕过降级矩阵）；get() 见 None
+  作废命中（失败方向 = 误失效而非脏命中，条目不撕毁，探测恢复后版本闸照常）、set() 见
+  None 跳过写缓存（查询结果照常返回不打断应答）；stats 记 `version_probe_failures`
+  留痕；失败不进记忆化窗口（下次调用立即重试，缺库/文件锁类故障恢复即时生效）。
+  publish_flight 的 flight 分发不受影响（等待者共享 leader 新鲜结果的语义不变）。

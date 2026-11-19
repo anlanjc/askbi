@@ -9,7 +9,8 @@
 - answer 轮金标一律 compile_sql 生成，禁止手写 SQL；
 - 构建期自检（探针-定稿口径）：
   1. 逐轮模拟 runner 的 resolve_followup 接线（ctx.set 存改写后问题）推导有效问题，
-     mock 解析器重答与金标同库比对（LIMIT 剥离口径 + LIMIT 行相等）；
+     mock 解析器重答与金标同库比对（LIMIT 剥离口径 + LIMIT 行相等）；answer 轮
+     金标过截断边界 strict 断言（AB-29，并列边界 fail-fast）；
   2. clarify/refusal 轮 mock clarifier 实判 verdict；suspend 轮断言 verdict=clarify
      （挂起由 clarify 触发）；merged_contains 轮按 clarify_suspend_node 的合并规则
      构造合并问题后同样探针；
@@ -37,6 +38,7 @@ from app.cache import fingerprint
 from app.context import resolve_followup
 from app.data.dsl import QueryDSL, compile_sql
 from app.data.sandbox import execute_sync
+from app.eval.limit_invariant import limit_boundary_strict
 from app.llm.mock import _clarifier, _parse_question
 
 TARGET = ROOT / "eval" / "multiturn_deep.jsonl"
@@ -332,9 +334,13 @@ def _strip_limit(sql: str) -> tuple[str, str]:
 
 
 def _probe_answer(effective_q: str, role: str, gold_dsl: dict, tag: str) -> list[str]:
-    """mock 重答有效问题与金标同库比对（LIMIT 剥离口径）。"""
+    """mock 重答有效问题与金标同库比对（LIMIT 剥离口径 + 截断边界 strict 断言）。"""
     problems: list[str] = []
     gold_sql, _ = compile_sql(QueryDSL(**gold_dsl), role=role)
+    # AB-29（评审 5.0）：截断边界并列 → LIMIT 截断集合执行间非确定，该轮金标不得入集
+    ok, detail = limit_boundary_strict(gold_sql)
+    if not ok:
+        return [f"{tag} [{role}] {detail}"]
     try:
         parsed = QueryDSL(**_parse_question(effective_q))
         got_sql, _ = compile_sql(parsed, role=role)

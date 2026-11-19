@@ -8,7 +8,7 @@
       节点、全部函数名 ∈ 安全函数白名单、全部表引用 ∈ 当前数据集 spec 表集合；
    c. 掩码列守卫：MASKED_FIELDS 不允许出现在任何生成的 SQL 中；
    d. 关键词黑名单（正则）：防 sqlglot 方言解析盲区的最后一道正则层；
-3. 资源层：强制 LIMIT、执行超时（interrupt() 打断）。
+3. 资源层：语句字节上界（64KB，AB-7 入口即拒）、强制 LIMIT、执行超时（interrupt() 打断）。
 
 红队演进实录（防御随代际攻击面升级，体例延续 AB-HR1 → ASK-15）：
 - AB-HR1（2026-11-09）：parquet_scan 文件读取家族不在黑名单（探查实锤穿过
@@ -92,6 +92,13 @@ _FORBIDDEN = re.compile(
 # 携带任意字符串/嵌套 SQL，fail-closed，见文件头红队演进实录 1B5 段第 4 点）。
 _CONNECT_CONFIG = {"enable_external_access": False}
 _MAX_ROWS = 1000
+
+# AB-7（评审 5.0，P1）：guard 入口 SQL 字节上界。复核实证：0.3MB 合法语句走完全部
+# 守卫层（解析 + AST 遍历 + 黑名单扫描）实测 ~1s——注入可把单次 guard 拖成秒级
+# 同步工作（async 路径修复前更冻结事件循环，见 execute 注释）。64KB 远大于编译器
+# 产物与冻结评测金标的最大体积（探针实测最大金标 SQL 仅数百字节），对合法面零影响；
+# 超界在入口即拒，任何守卫层都不再为超大输入做昂贵解析（DoS 链第二层收口）。
+MAX_SQL_BYTES = 64 * 1024
 
 # ---------------------------------------------------------------------------
 # [1B5] sqlglot AST 白名单（解析级收口，设计决策见文件头"红队演进实录"1B5 段）
@@ -337,13 +344,20 @@ def _parse_single(s: str) -> exp.Expression:
 def guard(sql: str, *, db_path: str | Path | None = None) -> str:
     """守卫：返回追加 LIMIT 后的安全 SQL；不通过抛 SqlRejected。
 
-    层序（[1B5] 纵深四层）：文本快速通道（空/多语句/前缀）→ 解析层（sqlglot）
-    → AST 白名单（语句类型/函数/表）→ 掩码列 → 关键词黑名单 → 强制 LIMIT。
+    层序（[1B5] 纵深四层 + AB-7 资源上界）：字节上界（入口即拒）→ 文本快速通道
+    （空/多语句/前缀）→ 解析层（sqlglot）→ AST 白名单（语句类型/函数/表）→
+    掩码列 → 关键词黑名单 → 强制 LIMIT。
 
     db_path：执行库路径。表白名单按"在哪个库上执行就用哪个 spec 的表集合"
     解析（registry.spec_for_db 反查），缺省用 settings.dataset 当前激活 spec
     ——guard(sql) 旧调用签名完全兼容。
     """
+    # ---- 0. 资源上界（AB-7）：字节超界入口即拒，消息注明上界 ----
+    n_bytes = len(sql.encode("utf-8"))
+    if n_bytes > MAX_SQL_BYTES:
+        raise SqlRejected(
+            f"语句层: SQL 超过 {MAX_SQL_BYTES // 1024}KB 上界（{n_bytes} 字节），拒绝执行"
+        )
     s = sql.strip().rstrip(";").strip()
     if not s:
         raise SqlRejected("空语句")
@@ -403,11 +417,20 @@ class Sandbox:
     async def execute(self, sql: str) -> QueryResult:
         # [1B5] 表白名单按执行库对齐 spec：传 db_path 使 guard 的表集合与
         # 本连接的库一致（评测按库判分 / 多数据源 Sandbox(db_path=spec...)）。
-        safe_sql = guard(sql, db_path=self.db_path)
+        # AB-7（评审 5.0）：guard（解析 + AST 遍历）曾同步执行在事件循环线程——
+        # 超大语句的守卫段实测冻结循环 ~1s，且 guard 在 wait_for 之外不受
+        # sql_timeout 保护。现 guard 与 _run 同入工作线程并同处超时范围：
+        # 解析慢也被超时打断（DoS 链第三层收口）；SqlRejected 照常传播
+        # （工作线程异常原样上抛，拒绝语义不变）。execute_sync 同步路径无
+        # 事件循环可冻结，字节上界 + filters 条数上界已兜住主害，保持不变。
+        def _guarded_run(con: duckdb.DuckDBPyConnection) -> QueryResult:
+            safe_sql = guard(sql, db_path=self.db_path)
+            return self._run(con, safe_sql)
+
         con = duckdb.connect(self.db_path, read_only=True, config=_CONNECT_CONFIG)
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(self._run, con, safe_sql), timeout=self.timeout
+                asyncio.to_thread(_guarded_run, con), timeout=self.timeout
             )
         except TimeoutError:
             raise SqlTimeout(f"查询超过 {self.timeout}s 被中断") from None

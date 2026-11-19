@@ -3,10 +3,11 @@
 与 build_dataset_c.py 同款设计，目标数据集换成连锁酒店酒旅（app/data/dataset_d.py，
 [1B4-AB] 任务二第四数据源）：
 - query 题内嵌"意图 DSL"，gold_sql = compile_sql(意图DSL, role, spec=hotel) —— 金标与线上编译器同源；
-- 构建期自检（三重）：
+- 构建期自检（三重 + 边界不变量）：
   1. query：mock 解析器（hotel 词表）重答每道 query 题，与金标在同一 DuckDB（D 库）
      执行比对（LIMIT 剥离口径，防并列截断边界执行间翻转），不通过即打印差异——
-     措辞超出解析器覆盖/意图 DSL 写错在构建期暴露；
+     措辞超出解析器覆盖/意图 DSL 写错在构建期暴露；每道 query 金标另过
+     LIMIT 截断边界 strict 断言（AB-29，并列边界 fail-fast 拒绝入集）；
   2. drill：解析可产出合法 DSL 且路由为 heavy（drill 判分依赖 full 链路的叙述+QA）；
   3. clarify/refusal：mock clarifier 实判 verdict 与期望 kind 一致；
 - drill/clarify/refusal 无金标（runner 按 answer kind/叙述+QA 判分）；
@@ -32,6 +33,7 @@ from app.agents.nodes import route_node
 from app.data.dataset_d import HOTEL_SPEC
 from app.data.dsl import build_dsl, compile_sql
 from app.data.sandbox import execute_sync
+from app.eval.limit_invariant import limit_boundary_strict
 from app.llm.mock import _clarifier, _parse_question
 
 
@@ -110,7 +112,10 @@ def _canon(rows: list[list]) -> list[tuple]:
 
 
 def _strip_limit(sql: str) -> tuple[str, str]:
-    """剥掉编译器恒定的尾行 LIMIT，返回 (主体 SQL, LIMIT 行)——防并列截断边界执行间翻转。"""
+    """剥掉编译器恒定的尾行 LIMIT，返回 (主体 SQL, LIMIT 行)——防并列截断边界执行间翻转。
+
+    截断边界无并列由 limit_boundary_strict 程序化断言（AB-29），不再依赖人工纪律。
+    """
     body, _, limit_line = sql.rpartition("\nLIMIT")
     return body, ("LIMIT" + limit_line)
 
@@ -129,6 +134,10 @@ def self_check() -> list[str]:
     for sid, kind, question, spec, role in SPECS:
         if kind == "query":
             gold_sql, _ = compile_sql(build_dsl(spec, HOTEL_SPEC), role=role, spec=HOTEL_SPEC)
+            # AB-29（评审 5.0）：截断边界并列 → LIMIT 截断集合执行间非确定，不得入集
+            ok, detail = limit_boundary_strict(gold_sql, db_path=db)
+            if not ok:
+                problems.append(f"{sid} [{role}] {detail}")
             try:
                 parsed = build_dsl(_parse_question(question, HOTEL_SPEC), HOTEL_SPEC)
                 got_sql, _ = compile_sql(parsed, role=role, spec=HOTEL_SPEC)

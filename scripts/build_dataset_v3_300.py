@@ -4,11 +4,12 @@
 - 冻结的 eval/dataset_v2_140.json 一个字节不改——本脚本只读它；构建产物内冻结条目
   与源文件**逐 dict 相等**（程序化校验，任何漂移立即报错），总数断言 300 条；
 - 新条目金标一律 compile_sql 生成，禁止手写 SQL；
-- 构建期自检（三重）：
+- 构建期自检（四重）：
   1. query：mock 解析器重答每道新 query 题，与金标同库执行比对（同 v2_140 口径）；
   2. clarify/refusal：mock clarifier 实判 verdict 与期望 kind 一致；
   3. drill：mock 解析可产出合法 DSL（build_dsl 不抛）且路由为 heavy（drill 判分
      依赖 full 链路的叙述+QA，light 链路必挂——措辞必须含重词）；
+  4. query 金标 LIMIT 截断边界 strict 断言（AB-29，冻结+新增逐条 fail-fast）；
 - 新题与冻结 148 题问题串零重复 + 新题集合内部零重复（程序化断言）；
 - 新条目带 batch 字段标注批次来源，冻结条目原样（无该字段）。
 
@@ -35,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 from app.agents.nodes import route_node
 from app.data.dsl import QueryDSL, build_dsl, compile_sql
 from app.data.sandbox import execute_sync
+from app.eval.limit_invariant import limit_boundary_strict
 from app.llm.mock import _clarifier, _parse_question
 
 FROZEN = ROOT / "eval" / "dataset_v2_140.json"
@@ -352,7 +354,8 @@ def _strip_limit(sql: str) -> tuple[str, str]:
     分组行数 > LIMIT 时（如 省份×渠道=110 > 100），LIMIT 截断在并列值的边界上
     是**执行间非确定的**（DuckDB 并行聚合的并列组顺序漂移）——同一条 SQL 跑两次
     尾行都可能不同。自检改为：LIMIT 行逐字相等（parse 的 limit 语义仍被钉住）+
-    无界全结果集比对（并列翻转不再造成假阳性）。评测条目本身已保证分组行数 ≤100。
+    无界全结果集比对（并列翻转不再造成假阳性）。分组行数与截断边界由构建期
+    不变量 limit_boundary_strict 程序化保证（AB-29，见 limit_invariant_check）。
     """
     body, _, limit_line = sql.rpartition("\nLIMIT")
     return body, ("LIMIT" + limit_line)
@@ -385,6 +388,35 @@ def self_check_new_queries() -> list[str]:
             problems.append(
                 f"{sid} [{role}] mock 结果与金标不一致\n    Q: {question}\n    gold: {gold_sql}\n    got : {got_sql}"
             )
+    return problems
+
+
+def limit_invariant_check() -> list[str]:
+    """构建期自检④（AB-29，评审 5.0）：全部 query 金标的截断边界 strict 断言。
+
+    覆盖冻结 148 条中的 query 题（gold_sql 逐字取自冻结源文件，含已知 top-N 条目
+    v2-033/036/039/124）+ 新增 96 条（compile_sql 生成，含 v3-212/214/215）。
+    断言口径 = 边界 strict 即可入库：允许无界行数 > LIMIT，只要截断边界无并列
+    （这正是 LIMIT 剥离口径的语义）；并列即拒绝该条目入集（fail-fast 报条目 id）。
+    """
+    problems: list[str] = []
+    frozen = json.loads(FROZEN.read_text(encoding="utf-8"))["items"]
+    n_checked = 0
+    for it in frozen:
+        if it["kind"] == "query" and it.get("gold_sql"):
+            n_checked += 1
+            ok, detail = limit_boundary_strict(it["gold_sql"])
+            if not ok:
+                problems.append(f"{it['id']} [冻结] {detail}")
+    for sid, kind, question, spec, role, _split in NEW_SPECS:
+        if kind != "query":
+            continue
+        n_checked += 1
+        gold_sql, _ = compile_sql(QueryDSL(**spec), role=role)
+        ok, detail = limit_boundary_strict(gold_sql)
+        if not ok:
+            problems.append(f"{sid} [新增] {detail}")
+    print(f"LIMIT 边界不变量：{n_checked} 条 query 金标逐条断言")
     return problems
 
 
@@ -477,13 +509,15 @@ def main() -> int:
     problems = integrity_check()
     problems += self_check_new_queries()
     problems += self_check_new_kinds()
+    problems += limit_invariant_check()
     if problems:
         print(f"自检未通过 {len(problems)} 条：")
         for p in problems:
             print("  -", p)
         return 1
     print("自检通过：新 query 题 mock 重答与金标同库一致；clarify/refusal verdict 实判一致；"
-          "drill 解析合法且路由 heavy；与冻结集零重复、id 无冲突、配比 96/19/19/18")
+          "drill 解析合法且路由 heavy；与冻结集零重复、id 无冲突、配比 96/19/19/18；"
+          "全部 query 金标过 LIMIT 截断边界 strict 断言（AB-29）")
 
     note = build(None if args.check else TARGET)
     print(note)

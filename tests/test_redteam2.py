@@ -263,13 +263,18 @@ def test_rt2_fail_open_waiter_publish_interleaves_safely():
 
 
 def test_rt2_publish_flight_store_failure_never_wedges_flight_map():
-    """对抗 store 失败（版本探测抛错 → set 抛错）：flight 仍被拆除、等待者拿到共享结果
-    不被永久挂死——缓存写失败不得把单飞变成可用性风险（try/finally 拆除语义）。"""
+    """对抗 store 失败：flight 仍被拆除、等待者拿到共享结果不被永久挂死——缓存写失败
+    不得把单飞变成可用性风险（try/finally 拆除语义）。
+
+    评审 5.0（AB-19）收紧契约：版本探测异常（缺库/文件锁）fail-open——publish_flight
+    静默跳过写缓存不再向上抛（duckdb 原文曾穿透成 SSE error）；flight 分发与拆除语义
+    不变。任意其他 store 失败（monkeypatch set 抛错）仍向上传播且 flight 必拆。
+    """
     calls = {"n": 0}
 
     def failing_provider() -> str:
         calls["n"] += 1
-        # claim 的 get 未命中时不调探测（条目缺失先返回）；set 是首个调用点 → 必抛
+        # claim 的 get 未命中时不调探测（条目缺失先返回）；set 是首个调用点 → AB-19 fail-open
         raise RuntimeError("version probe boom")
 
     c = _make_cache(version_provider=failing_provider)
@@ -282,12 +287,38 @@ def test_rt2_publish_flight_store_failure_never_wedges_flight_map():
     t = threading.Thread(target=waiter)
     t.start()
     time.sleep(0.1)
-    with pytest.raises(RuntimeError):
-        c.publish_flight("k", dict(_SF_RESULT))      # set 抛错向上传播（leader 侧可感知）
+    c.publish_flight("k", dict(_SF_RESULT))          # 探测异常 → 跳过写缓存，不抛（AB-19）
     t.join(timeout=5)
     assert not t.is_alive(), "等待者必须被唤醒而非永久挂死"
     assert out["w"] == ("flight", _SF_RESULT)        # 结果已挂 flight 分发给等待者
     assert not c._flights, "flight 表必须被 try/finally 拆除，不留永久在飞记录"
+    st = c.stats()
+    assert st["stores"] == 0                         # 写缓存被跳过
+    assert st["version_probe_failures"] >= 1         # fail-open 留痕
+    assert c.get("k") is None                        # 无版本条目不落缓存
+
+    # 非 probe 来源的 store 失败（如内存异常）：仍向上传播（leader 侧可感知），flight 必拆
+    c2 = _make_cache()
+
+    def exploding_set(key, result):
+        raise RuntimeError("store boom")
+
+    c2.set = exploding_set
+    assert c2.claim_flight("k") == ("leader", None)
+    out2: dict[str, tuple] = {}
+
+    def waiter2() -> None:
+        out2["w"] = c2.claim_flight("k")
+
+    t2 = threading.Thread(target=waiter2)
+    t2.start()
+    time.sleep(0.1)
+    with pytest.raises(RuntimeError):
+        c2.publish_flight("k", dict(_SF_RESULT))
+    t2.join(timeout=5)
+    assert not t2.is_alive()
+    assert out2["w"] == ("flight", _SF_RESULT)
+    assert not c2._flights
 
 
 def test_rt2_fail_flight_without_flight_is_noop():

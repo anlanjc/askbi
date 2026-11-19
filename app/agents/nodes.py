@@ -299,6 +299,47 @@ async def sql_agent_node(state: GraphState) -> dict:
 
 # ---------------- 4. executor（纯代码：沙箱执行） ----------------
 
+# AB-1②：等待段在事件循环内的轮询步长（flight_state 纯内存读）。等待者不占线程池的
+# 代价 = 结果感知延迟上界一个步长；SSE 应答秒级时延语境下可忽略。
+_FLIGHT_POLL_SECONDS = 0.05
+
+
+async def _wait_flight(cache, key: str) -> tuple[str, dict | None]:
+    """AB-1②：singleflight 异步认领（登记 + 等待两段）——事件循环内完成，不阻塞线程池。
+
+    （原缺陷：等待者经 to_thread 阻塞在 claim_flight 的 threading.Event 上，40 路并发
+    同 key 时占满默认执行器，leader 自己的 claim/publish 反被排队饿死——40/40 超时
+    fail-open、coalesced=0。）登记恰好一次（等待名额/上限计数不容双算）；持登记返回的
+    flight 引用轮询（waiter_state）：publish 结果挂对象先于拆表，结果一经挂上必可读，
+    不因读表微秒窗口漏看而连环重执行。等待上界与 claim_flight 同源（flight_wait_seconds）；
+    超时 fail-open 计 singleflight_timeouts；leader 失败拆 flight → "gone" → 重新
+    register 竞选，恰一名接棒。退出（超时/取消）必回收等待名额。
+    返回 ("leader", None) / ("flight", result) / ("miss", None)——与 claim_flight 契约对齐。
+    """
+    flight = None
+    try:
+        outcome, flight = cache.register_flight(key)
+        if outcome != "wait":                            # leader / miss（名额超限 fail-open）
+            return outcome, None
+        deadline = time.monotonic() + cache.flight_wait_seconds
+        while True:
+            state, shared = cache.waiter_state(key, flight)
+            if state == "flight":
+                cache.release_waiter(key, flight)
+                return "flight", shared
+            if state == "gone":
+                outcome, flight = cache.register_flight(key)   # 重新竞选（可能接棒 leader）
+                if outcome != "wait":
+                    return outcome, None
+                continue
+            if time.monotonic() >= deadline:
+                cache.release_waiter(key, flight, timed_out=True)
+                return "miss", None                      # fail-open 自行执行
+            await asyncio.sleep(_FLIGHT_POLL_SECONDS)
+    except BaseException:
+        cache.release_waiter(key, flight)                # 取消等中断路径：名额必回收
+        raise
+
 
 async def executor_node(state: GraphState) -> dict:
     from ..data.sandbox import Sandbox
@@ -310,63 +351,67 @@ async def executor_node(state: GraphState) -> dict:
     cache = get_query_cache()
     cache_key = None
     is_leader = False
-    if cache.enabled and state.get("dsl") and state.get("sql"):
-        cache_key = fingerprint(state["dsl"], state.get("role", "boss"), spec.name)
-        # ASK-4 修复（评审 2.0）：缓存 get/set 曾在事件循环线程同步跑 DuckDB——
-        # data_version 探测为四聚合全表扫描，每 30s 窗口到期后冻结全部在途请求。
-        # 挪 to_thread（与同库 IO 的 Sandbox 惯例对齐）。
-        # singleflight（AB 车道）：同 key 并发未命中只放一个 leader 执行，等待者共享结果；
-        # 等待超时 fail-open 自行执行。快慢路径都以 to_thread 认领，执行仍留在事件循环原位
-        # （Sandbox 超时 interrupt 语义不迁移）。
-        outcome, shared = await asyncio.to_thread(cache.claim_flight, cache_key)
-        if shared is not None:   # 命中回放 / 单飞共享——两者对用户同为"结果回放"
-            result = {**align_columns(shared, state["dsl"].get("dimensions") or []), "from_cache": True}
-            return {
-                "result": result,
-                "sql_error": None,
-                "status": "executed",
-                "events": _merge_events(
-                    state,
-                    _event(state, "executor", "cache_hit", {
-                        "key": cache_key[:12], "row_count": result.get("row_count"),
-                        "shared": outcome == "flight",   # True=并发同问共享 leader 结果（非常规命中）
-                    }),
-                ),
-            }
-        is_leader = outcome == "leader"
     try:
-        res = await Sandbox(db_path=spec.db_abs_path).execute(state["sql"])
-    except Exception as e:  # noqa: BLE001
-        if cache_key is not None and is_leader:
-            await asyncio.to_thread(cache.fail_flight, cache_key)  # 拆 flight 唤醒等待者重新竞选
-        rc = state.get("repair_count", 0) + 1
-        over = rc > get_settings().max_sql_repairs
-        return {
-            "sql_error": str(e),
-            "repair_count": rc,
-            "refusal": f"查询连续执行失败：{e}" if over else None,
-            "status": "sql_failed" if not over else "refused",
-            "events": _merge_events(state, _event(state, "executor", "error", {"error": str(e), "repair": rc})),
+        if cache.enabled and state.get("dsl") and state.get("sql"):
+            cache_key = fingerprint(state["dsl"], state.get("role", "boss"), spec.name)
+            # ASK-4 修复（评审 2.0）：缓存 get（含 data_version 四聚合全表扫描）在事件循环
+            # 线程同步跑 DuckDB 曾冻结全部在途请求——慢路径（IO）挪 to_thread。
+            # singleflight（AB 车道 + 评审 5.0 AB-1）：同 key 并发未命中只放一个 leader 执行。
+            # 登记（纯内存）在事件循环直调、等待在事件循环轮询——等待者不再经 to_thread
+            # 阻塞线程池（占用反转：40 等待者曾占满默认执行器把 leader 自己反堵死）。
+            hit = await asyncio.to_thread(cache.get, cache_key)
+            if hit is not None:
+                outcome, shared = "hit", hit
+            else:
+                # AB-1②：登记 + 等待都由 _wait_flight 完成（登记恰好一次——名额/上限
+                # 计数不容双算），执行仍留在事件循环原位（Sandbox 超时 interrupt 语义不迁移）。
+                outcome, shared = await _wait_flight(cache, cache_key)
+            if shared is not None:   # 命中回放 / 单飞共享——两者对用户同为"结果回放"
+                result = {**align_columns(shared, state["dsl"].get("dimensions") or []), "from_cache": True}
+                return {
+                    "result": result,
+                    "sql_error": None,
+                    "status": "executed",
+                    "events": _merge_events(
+                        state,
+                        _event(state, "executor", "cache_hit", {
+                            "key": cache_key[:12], "row_count": result.get("row_count"),
+                            "shared": outcome == "flight",   # True=并发同问共享 leader 结果（非常规命中）
+                        }),
+                    ),
+                }
+            is_leader = outcome == "leader"
+        try:
+            res = await Sandbox(db_path=spec.db_abs_path).execute(state["sql"])
+        except Exception as e:  # noqa: BLE001
+            rc = state.get("repair_count", 0) + 1
+            over = rc > get_settings().max_sql_repairs
+            return {
+                "sql_error": str(e),
+                "repair_count": rc,
+                "refusal": f"查询连续执行失败：{e}" if over else None,
+                "status": "sql_failed" if not over else "refused",
+                "events": _merge_events(state, _event(state, "executor", "error", {"error": str(e), "repair": rc})),
+            }
+        result = {
+            "columns": res.columns,
+            "rows": res.rows,
+            "row_count": res.row_count,
+            "truncated": res.truncated,
+            "elapsed_ms": res.elapsed_ms,
         }
-    result = {
-        "columns": res.columns,
-        "rows": res.rows,
-        "row_count": res.row_count,
-        "truncated": res.truncated,
-        "elapsed_ms": res.elapsed_ms,
-    }
-    # 聚合函数在空集上返回一行 NULL：规范化为"无数据"（权限范围外/无符合条件数据）
-    if (
-        len(res.columns) == 1
-        and len(res.rows) == 1
-        and res.rows[0][0] is None
-    ):
-        result.update(rows=[], row_count=0, note="空结果（可能为权限范围外或无符合条件的数据）")
-    if cache_key is not None:
-        # leader publish：结果挂 flight 唤醒等待者 + 写缓存；fail-open 超时方 publish 时
-        # flight 已不在（或属原 leader）→ 纯写缓存。空结果同样缓存：权限范围外的问题重复问不必反复执行。
-        await asyncio.to_thread(cache.publish_flight, cache_key, result)
-    return {
+        # 聚合函数在空集上返回一行 NULL：规范化为"无数据"（权限范围外/无符合条件数据）
+        if (
+            len(res.columns) == 1
+            and len(res.rows) == 1
+            and res.rows[0][0] is None
+        ):
+            result.update(rows=[], row_count=0, note="空结果（可能为权限范围外或无符合条件的数据）")
+        if cache_key is not None:
+            # leader publish：结果挂 flight 唤醒等待者 + 写缓存；fail-open 超时方 publish 时
+            # flight 已不在（或属原 leader）→ 纯写缓存。空结果同样缓存：权限范围外的问题重复问不必反复执行。
+            await asyncio.to_thread(cache.publish_flight, cache_key, result)
+        return {
         "result": result,
         "sql_error": None,
         "status": "executed",
@@ -382,6 +427,14 @@ async def executor_node(state: GraphState) -> dict:
             ),
         ),
     }
+    finally:
+        # AB-1①（评审 5.0）：leader 终态保障——claim→execute→publish 全链的任何退出路径
+        # （正常 publish 后拆 flight 已发生 → no-op；SQL 失败修复路径；取消/断连等
+        # CancelledError/GeneratorExit 等 BaseException——except Exception 接不住曾致
+        # flight 永久残留，同 key 后续请求全部挂死到超时 fail-open）必经此处拆 flight。
+        # fail_flight 纯内存（锁 + event.set），事件循环内直调——取消路径不允许再 await。
+        if cache_key is not None and is_leader:
+            cache.fail_flight(cache_key)
 
 
 # ---------------- 5. insight（代码算事实 + LLM 解读 + 图表） ----------------

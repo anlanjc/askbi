@@ -14,6 +14,14 @@
 5. singleflight 并发击穿防护（AB 车道）：同 key 并发未命中只放一个 leader 执行
    （claim/publish/fail 三原语，执行方保持在事件循环原位——Sandbox 超时 interrupt 语义不迁移）；
    等待者共享 leader 结果；等待超时 fail-open 自行执行，绝不因单飞丢可用性。
+   评审 5.0（AB-1）：claim 拆出"登记/等待"两段原语供事件循环调用方使用——等待者
+   轮询 flight 终态而非阻塞线程池（40 等待者曾占满默认执行器把 leader 自己反堵死）；
+   同 key 等待者名额有上限（超出直接 fail-open）；leader 终态由调用方 try/finally
+   保障（fail_flight 幂等，publish 后为 no-op）——取消（CancelledError=BaseException）
+   不再永久残留 flight。
+6. 版本闸探测异常 fail-open（评审 5.0，AB-19）：_version_provider 抛错（缺库/文件锁
+   IOException）时返回 None 哨兵——命中路径一律作废、写路径跳过缓存，失败方向 =
+   "误失效"而非"脏命中"（与闸二设计哲学同向）；stats 记 version_probe_failures 留痕。
 """
 
 from __future__ import annotations
@@ -35,6 +43,10 @@ from .data.registry import DatasetSpec, get_spec
 
 # 指纹格式版本：规范化规则本身变化时递增，防止新旧语义混存
 _FINGERPRINT_VERSION = 1
+
+# AB-1③：同 key 等待者名额默认上限（构造参数可覆盖；等待者不占线程池，此上限
+# 只防极端惊群——超出者直接 fail-open 自行执行，单飞绝不成为可用性风险）
+_MAX_FLIGHT_WAITERS = 16
 
 # semver 注入钩子（test_cache 依赖契约）：非 None 时直接作为编译语义版本参与指纹
 _COMPILE_SEMVER_CACHE: str | None = None
@@ -179,6 +191,7 @@ class _Flight:
 
     event: threading.Event = field(default_factory=threading.Event)
     result: dict | None = None   # leader 成功后回填；None=失败/被拆除（等待者重新竞选）
+    waiters: int = 0             # AB-1③：在册等待者名额数（名额随本对象消亡，无泄漏）
 
 
 class QueryCache:
@@ -195,12 +208,16 @@ class QueryCache:
         version_clock: Callable[[], float] = time.monotonic,
         version_ttl_seconds: float | None = None,
         flight_wait_seconds: float | None = None,
+        max_flight_waiters: int | None = None,
         spec: DatasetSpec | None = None,
     ):
         s = get_settings()
         self.spec = spec or get_spec(s.dataset)   # 版本探测/库路径随数据集（默认跟随配置）
         self.ttl_seconds = s.cache_ttl_seconds if ttl_seconds is None else ttl_seconds
         self.max_entries = s.cache_max_entries if max_entries is None else max_entries
+        # AB-1③：同 key 等待者名额上限——等待者已在事件循环内等待（不占线程池），
+        # 上限防的是极端惊群下无界等待队列与等待超时风暴，超出直接 fail-open。
+        self._max_flight_waiters = _MAX_FLIGHT_WAITERS if max_flight_waiters is None else max_flight_waiters
         self._version_provider = version_provider or (
             lambda: data_version(db_path or self.spec.db_abs_path, self.spec)
         )
@@ -224,6 +241,8 @@ class QueryCache:
             "hits": 0, "misses": 0, "ttl_expired": 0,
             "version_invalidations": 0, "stores": 0, "evictions": 0,
             "singleflight_coalesced": 0, "singleflight_timeouts": 0,
+            "singleflight_overflow": 0,      # AB-1③：等待者超名额上限直接 fail-open 留痕
+            "version_probe_failures": 0,     # AB-19：版本闸探测异常 fail-open 留痕
         }
 
     # ---- 开关：调用时读 settings，测试/评测可在运行期翻转 ----
@@ -232,6 +251,11 @@ class QueryCache:
         if self._enabled_override is not None:
             return self._enabled_override
         return get_settings().cache_enabled
+
+    @property
+    def flight_wait_seconds(self) -> float:
+        """等待上界（AB-1②：异步等待段在事件循环内等待，上界与 claim_flight 同源）。"""
+        return self._flight_wait
 
     # ---- 对外接口 ----
     def get(self, key: str) -> dict | None:
@@ -253,6 +277,12 @@ class QueryCache:
                 return None
         # 闸二：数据版本（读时计算、带记忆化窗口；失败方向是"误失效"而非"脏命中"）
         current = self._current_version()
+        if current is None:
+            # AB-19：版本探测异常（缺库/文件锁 IOException）→ 命中一律作废（误失效方向），
+            # 但不撕毁条目——探测恢复后版本闸照常工作；查询照常执行不打断应答。
+            with self._lock:
+                self._counters["misses"] += 1
+            return None
         now2 = self._clock()
         with self._lock:
             entry = self._entries.get(key)
@@ -278,6 +308,10 @@ class QueryCache:
         if not self.enabled:
             return
         version = self._current_version()
+        if version is None:
+            # AB-19：版本探测异常 → 写路径跳过缓存（查询结果照常返回，不打断应答）；
+            # 不落无版本条目——否则探测恢复后该条目要靠版本比对或 TTL 才能清掉。
+            return
         with self._lock:
             self._entries[key] = _Entry(result=dict(result), created_at=self._clock(), version=version)
             self._entries.move_to_end(key)
@@ -289,15 +323,83 @@ class QueryCache:
     # ---- singleflight（并发击穿防护，AB 车道）：claim/publish/fail 三原语 ----
     # 执行方（executor_node）留在事件循环原位执行——Sandbox 的超时 interrupt 语义不迁移；
     # 缓存只做在飞登记与结果分发。等待超时 fail-open：单飞是优化，绝不成为可用性风险。
+    # 评审 5.0（AB-1）：claim 拆出"登记/等待"两段原语（register_flight/flight_state/
+    # release_waiter，全部纯内存、事件循环内直调）——异步调用方的等待不再阻塞线程池；
+    # claim_flight 保留为同步复合形态（快路径 + 登记 + threading.Event 阻塞等待），
+    # 供线程语境的脚本/评测/单测使用，语义与两段式逐字一致。
+
+    def register_flight(self, key: str) -> tuple[str, _Flight | None]:
+        """登记段（AB-1②）：快路径 get 由调用方先行，这里只做在飞登记——纯内存、无 IO，
+        事件循环内直调不进线程池。
+
+        返回 (outcome, flight)：
+        - ("leader", None)  取得执行权（须以 publish_flight / fail_flight 收尾，或由调用方
+          try/finally 的终态保障兜底 fail_flight）；
+        - ("wait", flight)  等待者名额已占（waiters += 1）——持返回的 flight 引用用
+          waiter_state 轮询终态，退出时（无论超时/取消/成功）调 release_waiter 回收名额；
+        - ("miss", None)    等待者超出名额上限 → 直接 fail-open 自行执行（计
+          singleflight_overflow，不占名额不占线程）。
+        禁用态恒 ("leader", None) 且不起 flight——与无缓存行为一致（调用方通常先判 enabled）。
+        """
+        if not self.enabled:
+            return "leader", None
+        with self._flight_lock:
+            flight = self._flights.get(key)
+            if flight is None:
+                self._flights[key] = _Flight()
+                return "leader", None
+            if flight.waiters >= self._max_flight_waiters:
+                with self._lock:
+                    self._counters["singleflight_overflow"] += 1
+                return "miss", None
+            flight.waiters += 1
+            return "wait", flight
+
+    def waiter_state(self, key: str, flight: _Flight) -> tuple[str, dict | None]:
+        """等待段的一步（AB-1②）：持登记返回的 flight 引用读终态，纯内存、事件循环直调。
+
+        关键在"持对象引用"而非查表：publish 是 结果挂对象 → 写缓存 → 拆表 顺序，
+        读表会在"结果已挂/表项已拆"的微秒窗口漏看终态，误判 gone 而重新竞选
+        （40 路并发曾因此连环重执行）；读对象则结果一经挂上必可读，拆表不影响。
+        返回：
+        - ("pending", None)  leader 仍在执行，等待者稍后再查；
+        - ("flight", result) 共享 leader 结果（计 singleflight_coalesced）——等待结束；
+        - ("gone", None)     leader 已拆 flight 且无结果（失败/取消）→ 重新 register 竞选。
+        """
+        with self._flight_lock:
+            if flight.result is not None:
+                with self._lock:
+                    self._counters["singleflight_coalesced"] += 1
+                return "flight", dict(flight.result)
+            if self._flights.get(key) is not flight:
+                return "gone", None
+            return "pending", None
+
+    def release_waiter(self, key: str, flight: _Flight | None = None, timed_out: bool = False) -> None:
+        """等待者退出（AB-1②）：回收等待名额；timed_out=True 时计 singleflight_timeouts
+        （fail-open 留痕，与 claim_flight 超时路径同口径）。
+
+        按登记对象回收计数（精确）；flight=None（异常早于登记）退化为按键回收——
+        flight 已换代时按新代名额回收，只可能少算一名（上限略偏保守），不会多放行。
+        名额随 _Flight 对象消亡，无泄漏面。
+        """
+        if timed_out:
+            with self._lock:
+                self._counters["singleflight_timeouts"] += 1
+        with self._flight_lock:
+            target = flight if flight is not None else self._flights.get(key)
+            if target is not None and target.waiters > 0:
+                target.waiters -= 1
 
     def claim_flight(self, key: str, timeout: float | None = None) -> tuple[str, dict | None]:
-        """单飞认领：同 key 并发未命中只放一个 leader 执行。
+        """单飞认领（同步复合形态：get 快路径 + register_flight 登记 + Event 阻塞等待）。
 
         返回 (outcome, shared_result)：
         - ("hit", result)   快路径命中，直接回放（与 get() 同语义同计数）；
         - ("leader", None)  取得执行权——调用方执行后必须 publish_flight / fail_flight 二选一收尾；
         - ("flight", result) 等待者共享 leader 结果（计 singleflight_coalesced）；
-        - ("miss", None)    等待超时 fail-open（计 singleflight_timeouts）——调用方自行执行，
+        - ("miss", None)    等待超时 fail-open（计 singleflight_timeouts）或等待者超名额
+                            上限 fail-open（计 singleflight_overflow）——调用方自行执行，
                             结束后仍应 publish_flight（flight 已不在时为纯写缓存）。
         禁用态恒 ("leader", None) 且不起 flight、不计数——与无缓存行为一致。
         """
@@ -306,24 +408,25 @@ class QueryCache:
             return "hit", hit
         if not self.enabled:
             return "leader", None
+        outcome, flight = self.register_flight(key)
+        if outcome != "wait":                     # leader / miss（名额超限 fail-open）
+            return outcome, None
         limit = self._flight_wait if timeout is None else timeout
         deadline = time.monotonic() + limit
         while True:
-            with self._flight_lock:
-                flight = self._flights.get(key)
-                if flight is None:
-                    self._flights[key] = _Flight()
-                    return "leader", None
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not flight.event.wait(remaining):
-                with self._lock:
-                    self._counters["singleflight_timeouts"] += 1
+                self.release_waiter(key, flight, timed_out=True)
                 return "miss", None
             if flight.result is not None:
+                self.release_waiter(key, flight)
                 with self._lock:
                     self._counters["singleflight_coalesced"] += 1
                 return "flight", dict(flight.result)
-            # leader 失败拆 flight（result=None）→ 循环重新竞选，执行责任不丢
+            # event 已置但 result 空 → leader 失败拆 flight → 重新竞选（恰一名接棒）
+            outcome, flight = self.register_flight(key)
+            if outcome != "wait":
+                return outcome, None
 
     def publish_flight(self, key: str, result: dict) -> None:
         """leader 执行成功后发布：结果挂上 flight 唤醒等待者，再写缓存、拆 flight。
@@ -387,17 +490,28 @@ class QueryCache:
             return info
 
     # ---- 内部 ----
-    def _current_version(self) -> str:
+    def _current_version(self) -> str | None:
         """数据版本号（带 30s 记忆化窗口）：窗口内复用上次探测结果。
 
         错误方向与设计一致：窗口内数据被外部刷新 → 短暂漏检 → 仍被 TTL 兜底，
         绝不会"脏命中"（命中结果的版本一定经过比对）。
+
+        AB-19：探测异常（缺库/文件锁 IOException 等）fail-open——返回 None 哨兵，
+        绝不向上抛（duckdb 原文曾穿透成 SSE error，绕过降级矩阵）。调用方契约：
+        get() 见 None 作废命中（误失效方向），set() 见 None 跳过写入。
+        探测失败不进记忆化窗口（下次调用立即重试——缺库/文件锁类故障恢复即时生效，
+        每次失败计 version_probe_failures 留痕）。
         """
         now = self._version_clock()
         memo = self._version_memo
         if memo is not None and now - memo[1] < self._version_ttl_seconds:
             return memo[0]
-        version = self._version_provider()
+        try:
+            version = self._version_provider()
+        except Exception:                     # noqa: BLE001 - fail-open，见 docstring（AB-19）
+            with self._lock:
+                self._counters["version_probe_failures"] += 1
+            return None
         self._version_memo = (version, now)
         return version
 

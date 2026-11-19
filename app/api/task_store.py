@@ -18,9 +18,24 @@ from ..config import get_settings
 # ASK-9：内存索引上限——淘汰仅影响常驻查询窗口，JSONL 全量留盘可回放
 _MAX_IN_MEMORY = 200
 
+# AB-18②：resume 在途标记 TTL——超过此占用时长视为"生成器未启动窗口"的死标记
+# （starlette 首帧 send 前不保证首迭代生成器、从不 aclose StreamingResponse——
+# gen 未创建即取消时 finally 不跑，标记永久泄漏），下次 acquire 时收回。
+# 默认上界 = max(sql_timeout) + LLM 预算：一次合法 astream 的最长在途时长
+# （SQL 超时上界 + 单次 LLM 请求上界 120s（app/llm/deepseek.py）+ 连接余量 10s）；
+# 构造参数 resume_ttl_seconds 显式覆盖优先（config 不新增字段的折中：TTL 语义
+# 属 TaskStore 内部纪律，非部署面配置）。误收回的最坏后果 = 同 thread 可再占
+# （退回 ASKBI-7 修复前的并发窗口，有属主校验与任务终态兜底），故上界取宽不取窄。
+_LLM_REQUEST_BUDGET_SECONDS = 130.0
+
+
+def _default_resume_ttl_seconds() -> float:
+    s = get_settings()
+    return max(float(s.sql_timeout_seconds), 0.0) + _LLM_REQUEST_BUDGET_SECONDS
+
 
 class TaskStore:
-    def __init__(self, path: Path | None = None):
+    def __init__(self, path: Path | None = None, resume_ttl_seconds: float | None = None):
         self.path = path or (get_settings().db_abs_path.parent / "tasks.jsonl")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._tasks: dict[str, dict] = {}
@@ -29,11 +44,18 @@ class TaskStore:
         # 与 InMemorySaver checkpointer 同生命周期：挂起的 thread 本就不跨重启，
         # 内存态注册表不引入新的持久化面。FIFO 上限防长跑无界增长（ASK-9 同思路）。
         self._thread_owners: dict[str, str | None] = {}
-        # ASKBI-7（评审 4.0）：resume 在途标记——thread_id 集合，占用窗口 = 校验挂起
-        # 通过 → astream(Command(resume)) 结束（gen finally 释放）。纯内存态：与挂起
-        # 拓扑 checkpointer 同生命周期，条目数受并发 resume 数约束且每条必被 finally
-        # 释放，无需上限淘汰。
-        self._resuming_threads: set[str] = set()
+        # ASKBI-7（评审 4.0）：resume 在途标记——thread_id → (占用起点 monotonic, 绑定任务 id)。
+        # 占用窗口 = 校验挂起通过 → astream 结束（gen finally 或终态联动释放，见下）。
+        # AB-18②（评审 5.0）：SSE 生成器存在"未启动窗口"——starlette 首帧 send 前不保证
+        # 首迭代生成器、从不 aclose StreamingResponse，gen 未创建即取消时 finally 不跑，
+        # 标记曾永久泄漏（resume 恒 409）、绑定任务永驻 running 绕过 _evict_if_over。
+        # 条目带单调时间戳：acquire 对超龄占用（> resume_ttl_seconds）收回 + 留痕计数，
+        # 并联动把滞留任务落 aborted 终态。纯内存态：与挂起拓扑 checkpointer 同生命周期。
+        self._resuming_threads: dict[str, tuple[float, str | None]] = {}
+        self._resume_ttl_seconds = (
+            _default_resume_ttl_seconds() if resume_ttl_seconds is None else resume_ttl_seconds
+        )
+        self._resume_ttl_reclaims = 0   # AB-18②：TTL 收回留痕计数（评审可观测）
         self._load()
 
     # ---- AB-HR2 thread 属主注册表 ----
@@ -55,22 +77,60 @@ class TaskStore:
         with self._lock:
             return self._thread_owners.get(thread_id)
 
-    # ---- ASKBI-7（评审 4.0）resume 在途标记 ----
+    # ---- ASKBI-7（评审 4.0）resume 在途标记（AB-18：TTL 收回 + 终态联动释放） ----
 
-    def acquire_thread_resume(self, thread_id: str) -> bool:
-        """per-thread resume 在途占用（setdefault 语义）：第一个 caller 占用成功
-        返回 True；同 thread 其余并发 caller 得 False（API 层据此 409 拒绝第二个
-        resume——曾两个都能通过 snap.next 检查并各自恢复同一挂起 thread）。"""
+    @property
+    def resume_ttl_reclaims(self) -> int:
+        """AB-18② 留痕：超龄占用被 TTL 收回的次数（评审/运维可观测）。"""
+        return self._resume_ttl_reclaims
+
+    def acquire_thread_resume(self, thread_id: str, task_id: str | None = None) -> bool:
+        """per-thread 在途占用（setdefault 语义）：第一个 caller 占用成功返回 True；
+        同 thread 其余并发 caller 得 False（API 层据此 409 拒绝第二个并发 run——
+        曾两个 resume 都能通过 snap.next 检查并各自恢复同一挂起 thread）。
+
+        task_id 绑定本占用：①终态联动释放（finish/finish_if_running 按绑定反查）；
+        ②TTL 收回时联动把滞留 running 的绑定任务落 aborted 终态。
+        AB-18②：条目带单调时间戳——占用超过 resume_ttl_seconds 视为"生成器未启动
+        窗口"的死标记（gen 未创建即取消时 finally 不跑），本次 acquire 收回 + 留痕，
+        新鲜占用不受影响（不误伤在途 run）。
+        """
+        now = time.monotonic()
+        stale_task: str | None = None
         with self._lock:
-            if thread_id in self._resuming_threads:
+            entry = self._resuming_threads.get(thread_id)
+            if entry is not None and now - entry[0] < self._resume_ttl_seconds:
                 return False
-            self._resuming_threads.add(thread_id)
-            return True
+            if entry is not None:
+                stale_task = entry[1]
+                self._resume_ttl_reclaims += 1
+            self._resuming_threads[thread_id] = (now, task_id)
+            if task_id is not None and task_id in self._tasks:
+                self._tasks[task_id]["resume_thread"] = thread_id
+        if stale_task is not None:
+            # 超龄占用联动终态：任务曾永驻 running 绕过内存上限（running 不可淘汰）。
+            # 在锁外调 finish_if_running（同锁非重入）；迟到的真实终态与本兜底幂等。
+            self.finish_if_running(
+                stale_task,
+                {"kind": "aborted", "message": "resume 标记超龄未释放，被 TTL 收回（SSE 生成器未启动窗口）"},
+                {}, [], 0.0,
+            )
+        return True
 
-    def release_thread_resume(self, thread_id: str) -> None:
-        """释放 resume 在途占用（SSE 生成器 finally 必经）。幂等：未占用时 no-op。"""
+    def release_thread_resume(self, thread_id: str, task_id: str | None = None) -> None:
+        """释放 resume 在途占用（SSE 生成器 finally 必经 + 终态联动释放共用）。幂等。
+
+        task_id 提供时做属主校验：仅当在途条目仍绑定本任务（或条目无绑定）才释放——
+        TTL 收回 + 新 run 接管后，旧 run 迟到的 finally 不得偷走新 run 的标记（否则
+        互斥被静默拆除，第二个并发 run 得以放行）。
+        """
         with self._lock:
-            self._resuming_threads.discard(thread_id)
+            entry = self._resuming_threads.get(thread_id)
+            if entry is None:
+                return
+            if task_id is not None and entry[1] is not None and entry[1] != task_id:
+                return   # 标记已归属新 run：本次为旧 run 的迟到释放，不偷
+            del self._resuming_threads[thread_id]
 
     def _load(self) -> None:
         if not self.path.exists():
@@ -143,6 +203,12 @@ class TaskStore:
                 events=events,
                 elapsed_ms=round(elapsed_ms, 1),
             )
+            resume_thread = t.pop("resume_thread", None)   # AB-18①：绑定随终态拆走
+        if resume_thread:
+            # AB-18①（评审 5.0）：任一终态路径联动释放在途标记——gen finally 不再是
+            # 唯一释放点（"finish 后 finally 前抛错"之类的残余窗口不再泄漏标记）。
+            # 属主校验：标记已被 TTL 收回 + 新 run 接管时，此处迟到释放不偷新标记。
+            self.release_thread_resume(resume_thread, task_id=task_id)
         self._append(t)
 
     def finish_if_running(
@@ -154,6 +220,8 @@ class TaskStore:
         供 SSE 生成器的 finally 兜底使用——客户端断连（GeneratorExit）/请求取消
         （CancelledError，均 BaseException，except Exception 接不住）走这里落
         kind=aborted，任务不再永久滞留 running 绕过内存上限。
+        AB-18①（评审 5.0）：落终态时联动释放在途标记（同 finish）——任务已死，
+        标记必不活过它的任务（gen 未启动窗口之外的第二道防线）。
         """
         with self._lock:
             t = self._tasks.get(task_id)
@@ -167,6 +235,9 @@ class TaskStore:
                 events=events,
                 elapsed_ms=round(elapsed_ms, 1),
             )
+            resume_thread = t.pop("resume_thread", None)
+        if resume_thread:
+            self.release_thread_resume(resume_thread, task_id=task_id)
         self._append(t)
         return True
 

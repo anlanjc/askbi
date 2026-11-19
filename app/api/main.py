@@ -244,8 +244,12 @@ async def ask(body: AskRequest, request: Request):
         finally:
             # ASKBI-7（评审 4.0）：resume 在途标记释放——astream 正常结束/出错/
             # clarify_pending 早退/断连取消均必经此处；释放幂等。
-            if body.resume and suspend_on:
-                get_task_store().release_thread_resume(body.thread_id)
+            # AB-6：非 resume 的执行互斥标记同样在此统一释放（suspend_on 下所有
+            # astream 都先 acquire）。AB-18①：task_id 属主校验——标记已被 TTL 收回
+            # 且新 run 接管时，迟到的 finally 不偷新标记（终态联动释放已先行处理）。
+            if suspend_on:
+                get_task_store().release_thread_resume(
+                    astream_config["configurable"]["thread_id"], task_id=task["id"])
             # ASKBI-1（评审 4.0）：任何退出路径的终态兜底——客户端断连（GeneratorExit）/
             # 请求取消（CancelledError）均 BaseException，except Exception 接不住，
             # 任务曾永久滞留 running 绕过内存上限。已终态（正常/error/clarify_pending）
@@ -263,8 +267,13 @@ async def ask(body: AskRequest, request: Request):
     # setdefault 式占用：已在途 → 409。占用放响应返回前的最后一步——从 aget_state
     # 返回到这里全部同步无 await（单事件循环内不存在插队窗口），create() 等先行步骤
     # 抛错时也不会留下无 gen 兜底释放的孤儿标记。
-    if (body.resume and suspend_on
-            and not get_task_store().acquire_thread_resume(body.thread_id)):
+    # AB-6（评审 5.0）：互斥泛化到非 resume——suspend_on 开启时任何 astream 启动都先
+    # acquire（同一开关前提，新参数默认行为零变化），同 thread 第二个并发 run（含同
+    # 属主自撞——互斥保护的是图/checkpointer 一致性，不是属主边界）一律 409。
+    # task_id 同步绑定：终态联动释放 + TTL 收回定位滞留任务（AB-18①②）。
+    exec_thread_id = (body.thread_id or task["id"]) if suspend_on else None
+    if (suspend_on
+            and not get_task_store().acquire_thread_resume(exec_thread_id, task_id=task["id"])):
         # RT2-1（红队 round 2，[1B4-AB]）：409 拒绝路径必须先给本次 create 的任务落
         # 终态再拒绝——create 先于 acquire（保持 ASKBI-7 的无 await 占用窗口），拒绝时
         # 若无兜底，任务永久滞留 running 且永不被 _evict_if_over 淘汰（running 不可
@@ -274,7 +283,8 @@ async def ask(body: AskRequest, request: Request):
             {}, [], (time.perf_counter() - t0) * 1000,
         )
         raise HTTPException(status_code=409,
-                            detail="该 thread 的澄清已在恢复中，请勿重复提交")
+                            detail=("该 thread 的澄清已在恢复中，请勿重复提交" if body.resume
+                                    else "该 thread 已有在途执行，请勿重复提交"))
     return StreamingResponse(
         gen(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

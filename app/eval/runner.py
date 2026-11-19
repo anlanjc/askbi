@@ -29,15 +29,19 @@ from ..data.sandbox import execute_sync
 
 DATASET = Path(__file__).resolve().parent.parent.parent / "eval" / "dataset.json"
 
-# --dataset 具名别名（[1B4-AB] 任务一）：v3 等短名 → 评测集路径；未命中的值按路径处理
-# （向后兼容：--dataset eval/dataset_v2_140.json 等既有用法逐字不变，缺省仍为 v1 回归集）。
+# --dataset 具名别名（[1B4-AB] 任务一，[1B6] 扩 v4/d）：v3 等短名 → 评测集路径；未命中的
+# 值按路径处理（向后兼容：--dataset eval/dataset_v2_140.json 等既有用法逐字不变，缺省仍为
+# v1 回归集）。
 DATASET_ALIASES: dict[str, str | None] = {
     "v1": None,  # 默认 v1 回归集（33 条 smoke）
     "v2": "eval/dataset_v2.json",
     "v2_140": "eval/dataset_v2_140.json",
     "v3": "eval/dataset_v3_300.json",
+    "v4": "eval/dataset_v4_600.json",
     "b": "eval/dataset_b.json",
     "c": "eval/dataset_c.json",
+    # 1B5 踩坑补遗：d 曾漏配——`--dataset d` 报"未知数据集"只能走全路径，顺手补齐
+    "d": "eval/dataset_d.json",
 }
 
 
@@ -146,15 +150,29 @@ async def run(
     if limit:
         items = items[:limit]
 
-    # 判分库随数据集走：settings.dataset 决定引擎与金标执行同源（默认数据集行为不变）
+    # 判分库随数据集走：settings.dataset 决定引擎与金标执行同源（默认数据集行为不变）。
+    # [1B6] 同题跨源条目（v4 扩容）：item["dataset"] 指定该条数据源（如 "coffee"）——
+    # 判分库与生成链路都随条目切源：settings.dataset 是 nodes/sandbox 各处现读的
+    # 单例字段，临时改写 + finally 恢复即整条链路（澄清/解析/编译/执行）落到对应
+    # spec，图结构与上层代码零改动（与 DATASET=coffee 环境变量切换同一语义，
+    # 仅作用域从进程缩到单条；评测循环串行，无并发读风险）。
     from ..data.registry import get_spec
 
-    judge_db = get_spec(settings.dataset).db_abs_path
+    default_dataset = settings.dataset
+    default_judge_db = get_spec(default_dataset).db_abs_path
 
     results = []
     for it in items:
+        item_dataset = it.get("dataset")
+        judge_db = get_spec(item_dataset).db_abs_path if item_dataset else default_judge_db
+        saved_dataset = default_dataset
+        if item_dataset and item_dataset != saved_dataset:
+            settings.dataset = item_dataset
         t0 = time.perf_counter()
-        state = await run_ask(it["question"], role=it.get("role", "boss"))
+        try:
+            state = await run_ask(it["question"], role=it.get("role", "boss"))
+        finally:
+            settings.dataset = saved_dataset
         elapsed = (time.perf_counter() - t0) * 1000
         answer = state.get("answer") or {}
         kind = it["kind"]
@@ -176,6 +194,7 @@ async def run(
             "detail": detail, "elapsed_ms": round(elapsed, 1), "tokens": tokens,
             "answer_kind": answer.get("kind"), "number_consistent": num_ok,
             "role": it.get("role", "boss"),
+            "dataset": item_dataset or default_dataset,
             # DSL/SQL 留痕：失败 case 无需重跑即可归因（此前为已知限制）
             "dsl": state.get("dsl"),
             "sql": state.get("sql"),
@@ -196,6 +215,11 @@ async def run(
         c = by_role.setdefault(r["role"], {"n": 0, "ok": 0})
         c["n"] += 1
         c["ok"] += r["ok"]
+    by_dataset: dict[str, dict] = {}
+    for r in results:
+        c = by_dataset.setdefault(r["dataset"], {"n": 0, "ok": 0})
+        c["n"] += 1
+        c["ok"] += r["ok"]
     lat = [r["elapsed_ms"] for r in results]
     nums = [r for r in results if r["number_consistent"] is not None]
     summary = {
@@ -207,6 +231,7 @@ async def run(
         "accuracy": sum(r["ok"] for r in results) / max(1, len(results)),
         "by_kind": by_kind,
         "by_role": by_role,
+        "by_dataset": by_dataset,
         "latency_ms_avg": round(statistics.mean(lat), 1) if lat else 0,
         "latency_ms_p95": round(sorted(lat)[int(len(lat) * 0.95) - 1], 1) if lat else 0,
         "tokens_total": sum(r["tokens"] for r in results),
@@ -226,6 +251,8 @@ def write_report(summary: dict, path: Path) -> None:
         f"- 延迟：avg {summary['latency_ms_avg']}ms / p95 {summary['latency_ms_p95']}ms",
         f"- token 消耗：{summary['tokens_total']}",
         f"- 角色×结果：{json.dumps(summary.get('by_role', {}), ensure_ascii=False)}",
+        *( [f"- 数据源×结果：{json.dumps(summary['by_dataset'], ensure_ascii=False)}"]
+           if summary.get("by_dataset") else [] ),
     ]
     if summary["number_consistency"] is not None:
         lines.append(f"- 叙述数值一致率：**{summary['number_consistency']:.1%}**")
@@ -251,7 +278,7 @@ async def main():
     ap.add_argument("--only", choices=["query", "refusal", "clarify", "drill"], default=None)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--dataset", type=str, default=None,
-                    help="评测集：具名别名（v1/v2/v2_140/v3/b/c）或路径（相对项目根或绝对），缺省 v1 回归集")
+                    help="评测集：具名别名（v1/v2/v2_140/v3/v4/b/c/d）或路径（相对项目根或绝对），缺省 v1 回归集")
     ap.add_argument("--split", type=str, default=None,
                     help="只跑标记 split 的条目（如 holdout），缺省全部")
     args = ap.parse_args()

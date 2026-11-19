@@ -1,0 +1,293 @@
+{
+ "_note": "跨源多轮评测集（[1B6]，2026-11-20）：saas 源 7 组 × 3-5 轮（32 轮），scenario 模板复用 multiturn_deep 的 9 类（指代消解词表已 spec 化——实体链换血用本源词表：'那外卖呢'coffee / '那旗舰版呢'saas / '那度假呢'hotel）。answer 轮金标由 compile_sql(role, spec=saas) 生成，判分库=askbi_c.duckdb（scripts/build_multiturn_cross_source.py 可重建/自检）。判分复用 app.eval.runner.judge_query（db_path 随 settings.dataset 走）。跑分命令：DATASET=saas LLM_PROVIDER=mock python scripts/run_multiturn_eval.py --dataset eval/multiturn_cross_c.json",
+ "items": [
+  {
+   "id": "mcc01",
+   "scenario": "resolve_chain",
+   "role": "boss",
+   "desc": "saas tier 实体链：旗舰版→专业版→基础版，末轮档位分组",
+   "turns": [
+    {
+     "q": "上月旗舰版套餐档位的MRR",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND p.tier = '旗舰版'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那专业版呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND p.tier = '专业版'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "那基础版呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND p.tier = '基础版'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "上月各套餐档位的MRR",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT p.tier AS tier, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY p.tier\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcc02",
+   "scenario": "clarify_mixed",
+   "role": "boss",
+   "desc": "saas 中途澄清→行业 ARPU 分组→档位毛利额→对比收束",
+   "turns": [
+    {
+     "q": "上月MRR",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "整体怎么样",
+     "expect": {
+      "kind": "clarify"
+     }
+    },
+    {
+     "q": "上月各行业的ARPU",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT c.industry AS industry, (SUM(l.seats * l.unit_price)) / NULLIF(COUNT(DISTINCT i.company_id), 0) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY c.industry\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月各套餐档位的毛利额",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT p.tier AS tier, (SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost)) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY p.tier\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "对比上月各套餐档位的毛利额差异",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT p.tier AS tier, (SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost)) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY p.tier\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcc03",
+   "scenario": "constraint_keep",
+   "role": "boss",
+   "desc": "saas 毛利率+近6个月窗口在渠道换血中保持（代理→直销→回环重问缓存→自助），末轮渠道分组",
+   "turns": [
+    {
+     "q": "代理渠道近6个月毛利率",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT ((SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost))) / NULLIF((SUM(l.seats * l.unit_price)), 0) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND i.channel = '代理'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那直销呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT ((SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost))) / NULLIF((SUM(l.seats * l.unit_price)), 0) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND i.channel = '直销'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "代理渠道近6个月毛利率",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT ((SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost))) / NULLIF((SUM(l.seats * l.unit_price)), 0) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND i.channel = '代理'\nORDER BY value DESC\nLIMIT 100",
+      "from_cache": true
+     }
+    },
+    {
+     "q": "那自助呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT ((SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost))) / NULLIF((SUM(l.seats * l.unit_price)), 0) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND i.channel = '自助'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "近6个月各渠道毛利率",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT i.channel AS channel, ((SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost))) / NULLIF((SUM(l.seats * l.unit_price)), 0) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY i.channel\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcc04",
+   "scenario": "clarify_then_drill",
+   "role": "boss",
+   "desc": "saas 澄清挂起→恢复出数→档位席位数→归因追问（教育行业 ARPU 下滑）",
+   "suspend": true,
+   "turns": [
+    {
+     "q": "最近表现怎么样",
+     "expect": {
+      "kind": "suspend"
+     }
+    },
+    {
+     "q": "MRR",
+     "resume": true,
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE TRUE\nORDER BY value DESC\nLIMIT 100",
+      "merged_contains": "用户澄清"
+     }
+    },
+    {
+     "q": "上月各套餐档位的席位数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT p.tier AS tier, SUM(l.seats) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY p.tier\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "为什么上月教育行业的ARPU下滑了",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(l.seats * l.unit_price)) / NULLIF(COUNT(DISTINCT i.company_id), 0) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.industry = '教育'\nORDER BY value ASC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcc05",
+   "scenario": "topic_switch",
+   "role": "boss",
+   "desc": "saas industry→档位分组话题切换后回指失败（上轮无行业实体→保守回退）→恢复→金融换血",
+   "turns": [
+    {
+     "q": "上月制造行业的席位数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(l.seats) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.industry = '制造'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月各套餐档位的账单数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT p.tier AS tier, COUNT(DISTINCT i.invoice_id) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY p.tier\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那零售呢",
+     "expect": {
+      "kind": "clarify",
+      "note_contains": "无同类型实体可替换"
+     }
+    },
+    {
+     "q": "上月零售行业的账单数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT COUNT(DISTINCT i.invoice_id) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.industry = '零售'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那金融呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT COUNT(DISTINCT i.invoice_id) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.industry = '金融'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcc06",
+   "scenario": "role_mixed",
+   "role": "south",
+   "desc": "saas south 角色多轮：全链路按华南 scope 收窄（金标以 role=south + saas spec 编译）",
+   "turns": [
+    {
+     "q": "上月各套餐档位的MRR",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT p.tier AS tier, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.region IN ('华南')\nGROUP BY p.tier\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月各渠道毛利率",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT i.channel AS channel, ((SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost))) / NULLIF((SUM(l.seats * l.unit_price)), 0) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.region IN ('华南')\nGROUP BY i.channel\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月付费客户数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT COUNT(DISTINCT i.company_id) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.region IN ('华南')\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月各行业席位数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT c.industry AS industry, SUM(l.seats) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND c.region IN ('华南')\nGROUP BY c.industry\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcc07",
+   "scenario": "mixed_long",
+   "role": "boss",
+   "desc": "saas 六轮混合长流：MRR 趋势→档位换血→渠道席位数趋势→显式区间毛利额",
+   "turns": [
+    {
+     "q": "近12个月MRR趋势",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT strftime('%Y-%m', i.invoice_date) AS month, SUM(l.seats * l.unit_price) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH)\nGROUP BY strftime('%Y-%m', i.invoice_date)\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月旗舰版套餐档位的席位数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(l.seats) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND p.tier = '旗舰版'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那基础版呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(l.seats) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND p.tier = '基础版'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "近6个月各渠道席位数趋势",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT strftime('%Y-%m', i.invoice_date) AS month, i.channel AS channel, SUM(l.seats) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY strftime('%Y-%m', i.invoice_date), i.channel\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "2025年1月到6月的毛利额",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(l.seats * l.unit_price)) - (SUM(l.seats * p.seat_cost)) AS value\nFROM invoice_lines l JOIN invoices i ON l.invoice_id = i.invoice_id JOIN companies c ON i.company_id = c.company_id JOIN plans p ON l.plan_id = p.plan_id\nWHERE strftime('%Y-%m', i.invoice_date) >= '2025-01' AND strftime('%Y-%m', i.invoice_date) <= '2025-06'\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  }
+ ]
+}

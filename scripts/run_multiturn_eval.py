@@ -17,6 +17,9 @@
     python scripts/run_multiturn_eval.py                     # 全量 → evidence/multiturn_report.md
     python scripts/run_multiturn_eval.py --only cache_repeat  # 只跑某场景
     python scripts/run_multiturn_eval.py --out path/to.md    # 自定义报告路径
+    python scripts/run_multiturn_eval.py --dataset multiturn_deep  # 具名别名（followup=缺省）
+    DATASET=coffee python scripts/run_multiturn_eval.py --dataset eval/multiturn_cross_b.json
+    # ^ DATASET 环境变量从环境透传（不在此覆写）：消解词表与判分库随激活 spec 走
 
 前提：data/askbi.duckdb 已生成（python scripts/gen_data.py，数据文件缺失时直接报错退出，
 不自动重生成——保持评测输入不可变）。
@@ -49,10 +52,28 @@ from app.agents.graph import build_graph, run_ask
 from app.cache import get_query_cache
 from app.config import get_settings
 from app.context import get_session_context, resolve_followup
+from app.data.registry import get_spec
 from app.eval.runner import judge_query  # 复用 v1 判分器（只导入不修改）
 
 DATASET = ROOT / "eval" / "dataset_v2_followup.json"
 DEFAULT_REPORT = ROOT.parent / "evidence" / "multiturn_report.md"
+
+# --dataset 具名别名（[1B6]）：消掉 EVIDENCE §152「多轮 runner 只收路径无具名别名」
+# 踩坑记录。未命中的值按路径处理（向后兼容，与单轮 runner 的 DATASET_ALIASES 无关——
+# 那是 app/eval/runner.py 的单轮评测集别名表，两表各管各的 runner）。
+DATASET_ALIASES: dict[str, str | None] = {
+    "multiturn_deep": "eval/multiturn_deep.jsonl",
+    "multiturn_deep_v2": "eval/multiturn_deep_v2.jsonl",   # [1B6] deep 扩容 60 组（冻结 20 组在前）
+    "followup": None,   # None = 缺省 v2 追加集（与不传 --dataset 同口径，30 条断言生效）
+}
+
+
+def _resolve_dataset_arg(value: str) -> Path | None:
+    """--dataset 参数解析：具名别名 → 项目根相对路径；其余按路径（相对/绝对）处理。"""
+    if value in DATASET_ALIASES:
+        rel = DATASET_ALIASES[value]
+        return None if rel is None else ROOT / rel
+    return Path(value)
 
 
 def load_dataset(path: Path) -> list[dict]:
@@ -118,8 +139,13 @@ async def run_turn(turn: dict, item: dict, sid: str, graph, settings) -> dict:
     }
 
 
-def judge_turn(r: dict, turn: dict) -> tuple[bool, str]:
-    """单轮判定：kind + gold 结果集 + 缓存徽章 + 消解说明 + 挂起负载。"""
+def judge_turn(r: dict, turn: dict, judge_db) -> tuple[bool, str]:
+    """单轮判定：kind + gold 结果集 + 缓存徽章 + 消解说明 + 挂起负载。
+
+    judge_db = 当前激活数据集的库路径（[1B6] 修复：此前 judge_query 不传 db_path，
+    金标恒在默认电商库执行，DATASET=coffee/saas/hotel 时跨源金标必错——判分库
+    随 settings.dataset 走，与单轮 runner 的 judge_db 口径同源）。
+    """
     exp = turn["expect"]
     kind = exp["kind"]
     answer = r["answer"]
@@ -132,7 +158,7 @@ def judge_turn(r: dict, turn: dict) -> tuple[bool, str]:
     if answer.get("kind") != kind:
         return False, f"期望 {kind}，得到 {answer.get('kind')}"
     if kind == "answer":
-        ok, detail = judge_query(answer, exp["gold_sql"])
+        ok, detail = judge_query(answer, exp["gold_sql"], db_path=judge_db)
         if not ok:
             return False, detail
     fc = exp.get("from_cache")
@@ -153,6 +179,9 @@ async def run(only: str | None, dataset_path: Path | None = None) -> dict:
     settings = get_settings()
     ds_abs = (dataset_path or DATASET).resolve()
     items = [i for i in load_dataset(ds_abs) if not only or i["scenario"] == only]
+    # 判分库随数据集走（[1B6]，仿单轮 runner 口径）：金标与生成 SQL 必须同库执行，
+    # 默认数据集 db_abs_path == settings.db_abs_path（逐字节兼容，ecommerce 行为不变）
+    judge_db = get_spec(settings.dataset).db_abs_path
     cache = get_query_cache()
     ctx = get_session_context()
 
@@ -167,7 +196,7 @@ async def run(only: str | None, dataset_path: Path | None = None) -> dict:
         for tno, turn in enumerate(item["turns"], 1):
             t0 = time.perf_counter()
             r = await run_turn(turn, item, sid, graph, settings)
-            ok, detail = judge_turn(r, turn)
+            ok, detail = judge_turn(r, turn, judge_db)
             item_ok &= ok
             tokens = sum(u.get("prompt_tokens", 0) + u.get("completion_tokens", 0)
                          for u in (r["usage"] or {}).values())
@@ -250,17 +279,22 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default=None, help="只跑某 scenario（如 cache_repeat）")
     ap.add_argument("--dataset", default=None,
-                    help="评测集路径（.json 或 .jsonl），缺省 eval/dataset_v2_followup.json（30 条口径）")
+                    help="评测集：具名别名（multiturn_deep/followup）或路径（.json/.jsonl），"
+                         "缺省 eval/dataset_v2_followup.json（30 条口径）")
     ap.add_argument("--out", default=None, help="报告输出路径，缺省随 --dataset 推导")
     args = ap.parse_args()
 
-    dataset_path = Path(args.dataset) if args.dataset else DATASET
+    resolved = _resolve_dataset_arg(args.dataset) if args.dataset else None
+    dataset_path = resolved if resolved is not None else DATASET
     if args.out:
         out = Path(args.out)
     elif dataset_path == DATASET:
         out = DEFAULT_REPORT
     else:
-        out = ROOT / "evidence" / f"multiturn_{dataset_path.stem}_report.md"
+        # 报告名去重前缀：multiturn_deep / multiturn_cross_b 等自带 multiturn_
+        # 前缀的评测集不再叠加（multiturn_deep → multiturn_deep_report.md）
+        stem = dataset_path.stem.removeprefix("multiturn_")
+        out = ROOT / "evidence" / f"multiturn_{stem}_report.md"
 
     if not get_settings().db_abs_path.exists():
         raise SystemExit(f"数据文件缺失：{get_settings().db_abs_path}（先运行 python scripts/gen_data.py）")

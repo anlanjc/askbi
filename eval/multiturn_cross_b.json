@@ -1,0 +1,333 @@
+{
+ "_note": "跨源多轮评测集（[1B6]，2026-11-20）：coffee 源 8 组 × 3-5 轮（36 轮），scenario 模板复用 multiturn_deep 的 9 类（指代消解词表已 spec 化——实体链换血用本源词表：'那外卖呢'coffee / '那旗舰版呢'saas / '那度假呢'hotel）。answer 轮金标由 compile_sql(role, spec=coffee) 生成，判分库=askbi_b.duckdb（scripts/build_multiturn_cross_source.py 可重建/自检）。判分复用 app.eval.runner.judge_query（db_path 随 settings.dataset 走）。跑分命令：DATASET=coffee LLM_PROVIDER=mock python scripts/run_multiturn_eval.py --dataset eval/multiturn_cross_b.json",
+ "items": [
+  {
+   "id": "mcb01",
+   "scenario": "resolve_chain",
+   "role": "boss",
+   "desc": "coffee channel 实体链：堂食→外卖→外带，末轮渠道分组",
+   "turns": [
+    {
+     "q": "上月堂食渠道的销售额",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND t.channel = '堂食'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那外卖呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND t.channel = '外卖'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "那外带呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND t.channel = '外带'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "上月各渠道销售额",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT t.channel AS channel, SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY t.channel\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcb02",
+   "scenario": "resolve_chain",
+   "role": "boss",
+   "desc": "coffee store_type 实体链：旗舰店→标准店，中间话题回环重问（缓存命中）→店中店",
+   "turns": [
+    {
+     "q": "上月旗舰店店型的客单价",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) / NULLIF(COUNT(DISTINCT t.ticket_id), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND s.store_type = '旗舰店'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那标准店呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) / NULLIF(COUNT(DISTINCT t.ticket_id), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND s.store_type = '标准店'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "上月旗舰店店型的客单价",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) / NULLIF(COUNT(DISTINCT t.ticket_id), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND s.store_type = '旗舰店'\nORDER BY value DESC\nLIMIT 100",
+      "from_cache": true
+     }
+    },
+    {
+     "q": "上月各店型客单价",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT s.store_type AS store_type, (SUM(tl.quantity * tl.unit_price)) / NULLIF(COUNT(DISTINCT t.ticket_id), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY s.store_type\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcb03",
+   "scenario": "resolve_chain",
+   "role": "boss",
+   "desc": "coffee 跨维度实体链：category 换血（烘焙→饮品）→换话题 subcategory 换血（咖啡→茶饮）→品类分组",
+   "turns": [
+    {
+     "q": "近6个月烘焙品类的毛利率",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT ((SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost))) / NULLIF((SUM(tl.quantity * tl.unit_price)), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND k.category = '烘焙'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那饮品呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT ((SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost))) / NULLIF((SUM(tl.quantity * tl.unit_price)), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND k.category = '饮品'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "近6个月咖啡子类的销量",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(tl.quantity) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND k.subcategory = '咖啡'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那茶饮呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(tl.quantity) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND k.subcategory = '茶饮'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "上月各品类毛利率",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT k.category AS category, ((SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost))) / NULLIF((SUM(tl.quantity * tl.unit_price)), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY k.category\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcb04",
+   "scenario": "constraint_keep",
+   "role": "boss",
+   "desc": "coffee 毛利额+近12个月窗口在 region 换血中保持（华南→华北→西南），末轮城市分组",
+   "turns": [
+    {
+     "q": "华南地区近12个月毛利额",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost)) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH) AND s.region = '华南'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那华北呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost)) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH) AND s.region = '华北'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "那西南呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost)) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH) AND s.region = '西南'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "近12个月各城市毛利额",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT s.city AS city, (SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost)) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH)\nGROUP BY s.city\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcb05",
+   "scenario": "clarify_then_drill",
+   "role": "boss",
+   "desc": "coffee 澄清挂起→恢复出数→渠道订单量→归因追问（客单价下滑）",
+   "suspend": true,
+   "turns": [
+    {
+     "q": "最近卖得怎么样",
+     "expect": {
+      "kind": "suspend"
+     }
+    },
+    {
+     "q": "销售额",
+     "resume": true,
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE TRUE\nORDER BY value DESC\nLIMIT 100",
+      "merged_contains": "用户澄清"
+     }
+    },
+    {
+     "q": "上月各渠道订单量",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT t.channel AS channel, COUNT(DISTINCT t.ticket_id) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY t.channel\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "为什么上月烘焙品类的客单价下滑了",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) / NULLIF(COUNT(DISTINCT t.ticket_id), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND k.category = '烘焙'\nORDER BY value ASC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcb06",
+   "scenario": "topic_switch",
+   "role": "boss",
+   "desc": "coffee store_type→品类分组话题切换后回指失败（上轮无店型实体→保守回退）→恢复→店中店换血",
+   "turns": [
+    {
+     "q": "上月旗舰店店型的销售额",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND s.store_type = '旗舰店'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月各品类的销量",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT k.category AS category, SUM(tl.quantity) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY k.category\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那标准店呢",
+     "expect": {
+      "kind": "clarify",
+      "note_contains": "无同类型实体可替换"
+     }
+    },
+    {
+     "q": "上月标准店店型的销售额",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND s.store_type = '标准店'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那店中店呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND s.store_type = '店中店'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcb07",
+   "scenario": "mixed_long",
+   "role": "boss",
+   "desc": "coffee 六轮混合长流：趋势→渠道换血→店型趋势→显式区间毛利额",
+   "turns": [
+    {
+     "q": "近12个月销售额趋势",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT strftime('%Y-%m', t.sale_date) AS month, SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH)\nGROUP BY strftime('%Y-%m', t.sale_date)\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月外卖渠道的客单价",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) / NULLIF(COUNT(DISTINCT t.ticket_id), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND t.channel = '外卖'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那堂食呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) / NULLIF(COUNT(DISTINCT t.ticket_id), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND t.channel = '堂食'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "近6个月各店型销售额趋势",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT strftime('%Y-%m', t.sale_date) AS month, s.store_type AS store_type, SUM(tl.quantity * tl.unit_price) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY strftime('%Y-%m', t.sale_date), s.store_type\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "2025年1月到6月的毛利额",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(tl.quantity * tl.unit_price)) - (SUM(tl.quantity * k.unit_cost)) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= '2025-01' AND strftime('%Y-%m', t.sale_date) <= '2025-06'\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcb08",
+   "scenario": "refusal_mixed",
+   "role": "boss",
+   "desc": "coffee 拒答插入对话：预测类拒答→回到历史数据→店型分组→品类换血",
+   "turns": [
+    {
+     "q": "上月堂食渠道的销量",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(tl.quantity) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND t.channel = '堂食'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "预测下季度的销售额",
+     "expect": {
+      "kind": "refusal"
+     }
+    },
+    {
+     "q": "上月各店型的客单价",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT s.store_type AS store_type, (SUM(tl.quantity * tl.unit_price)) / NULLIF(COUNT(DISTINCT t.ticket_id), 0) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY s.store_type\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月烘焙品类的订单量",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT COUNT(DISTINCT t.ticket_id) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND k.category = '烘焙'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那饮品呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT COUNT(DISTINCT t.ticket_id) AS value\nFROM ticket_lines tl JOIN tickets t ON tl.ticket_id = t.ticket_id JOIN stores s ON t.store_id = s.store_id JOIN skus k ON tl.sku_id = k.sku_id\nWHERE strftime('%Y-%m', t.sale_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND k.category = '饮品'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    }
+   ]
+  }
+ ]
+}

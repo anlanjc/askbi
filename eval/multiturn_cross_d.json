@@ -1,0 +1,289 @@
+{
+ "_note": "跨源多轮评测集（[1B6]，2026-11-20）：hotel 源 7 组 × 3-5 轮（31 轮），scenario 模板复用 multiturn_deep 的 9 类（指代消解词表已 spec 化——实体链换血用本源词表：'那外卖呢'coffee / '那旗舰版呢'saas / '那度假呢'hotel）。answer 轮金标由 compile_sql(role, spec=hotel) 生成，判分库=askbi_d.duckdb（scripts/build_multiturn_cross_source.py 可重建/自检）。判分复用 app.eval.runner.judge_query（db_path 随 settings.dataset 走）。跑分命令：DATASET=hotel LLM_PROVIDER=mock python scripts/run_multiturn_eval.py --dataset eval/multiturn_cross_d.json",
+ "items": [
+  {
+   "id": "mcd01",
+   "scenario": "resolve_chain",
+   "role": "boss",
+   "desc": "hotel channel 实体链：直销→旅行社→协议，末轮渠道间夜分组",
+   "turns": [
+    {
+     "q": "上月直销渠道的房费收入",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights * sl.unit_price) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND b.channel = '直销'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那旅行社呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights * sl.unit_price) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND b.channel = '旅行社'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "那协议呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights * sl.unit_price) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND b.channel = '协议'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "上月各渠道间夜数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT b.channel AS channel, SUM(sl.rooms * sl.nights) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY b.channel\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcd02",
+   "scenario": "resolve_chain",
+   "role": "boss",
+   "desc": "hotel hotel_type 实体链：度假→商务→精品，末轮店型间夜分组",
+   "turns": [
+    {
+     "q": "近6个月度假店型的平均房价",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(sl.rooms * sl.nights * sl.unit_price)) / NULLIF(SUM(sl.rooms * sl.nights), 0) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND h.hotel_type = '度假'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那商务呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(sl.rooms * sl.nights * sl.unit_price)) / NULLIF(SUM(sl.rooms * sl.nights), 0) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND h.hotel_type = '商务'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "那精品呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT (SUM(sl.rooms * sl.nights * sl.unit_price)) / NULLIF(SUM(sl.rooms * sl.nights), 0) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH) AND h.hotel_type = '精品'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "近6个月各酒店类型的间夜数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT h.hotel_type AS hotel_type, SUM(sl.rooms * sl.nights) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (5) MONTH)\nGROUP BY h.hotel_type\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcd03",
+   "scenario": "constraint_keep",
+   "role": "boss",
+   "desc": "hotel 毛利率+近12个月窗口在 region 换血中保持（华东→华北→东北），末轮城市毛利额分组",
+   "turns": [
+    {
+     "q": "华东地区近12个月毛利率",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT ((SUM(sl.rooms * sl.nights * sl.unit_price)) - (SUM(sl.rooms * sl.nights * rt.room_cost))) / NULLIF((SUM(sl.rooms * sl.nights * sl.unit_price)), 0) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH) AND h.region = '华东'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那华北呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT ((SUM(sl.rooms * sl.nights * sl.unit_price)) - (SUM(sl.rooms * sl.nights * rt.room_cost))) / NULLIF((SUM(sl.rooms * sl.nights * sl.unit_price)), 0) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH) AND h.region = '华北'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "那东北呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT ((SUM(sl.rooms * sl.nights * sl.unit_price)) - (SUM(sl.rooms * sl.nights * rt.room_cost))) / NULLIF((SUM(sl.rooms * sl.nights * sl.unit_price)), 0) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH) AND h.region = '东北'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "近12个月各城市毛利额",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT h.city AS city, (SUM(sl.rooms * sl.nights * sl.unit_price)) - (SUM(sl.rooms * sl.nights * rt.room_cost)) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (11) MONTH)\nGROUP BY h.city\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcd04",
+   "scenario": "clarify_then_drill",
+   "role": "boss",
+   "desc": "hotel 澄清挂起→恢复出数→店型预订量→归因追问（大床房型间夜下滑）",
+   "suspend": true,
+   "turns": [
+    {
+     "q": "最近经营情况怎么样",
+     "expect": {
+      "kind": "suspend"
+     }
+    },
+    {
+     "q": "房费收入",
+     "resume": true,
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights * sl.unit_price) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE TRUE\nORDER BY value DESC\nLIMIT 100",
+      "merged_contains": "用户澄清"
+     }
+    },
+    {
+     "q": "上月各酒店类型的预订量",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT h.hotel_type AS hotel_type, COUNT(DISTINCT b.booking_id) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY h.hotel_type\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "为什么上月大床房型的间夜数下滑了",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND rt.type_name = '大床'\nORDER BY value ASC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcd05",
+   "scenario": "topic_switch",
+   "role": "boss",
+   "desc": "hotel hotel_type→渠道平均房价话题切换后回指失败（上轮无店型实体→保守回退）→恢复→精品换血",
+   "turns": [
+    {
+     "q": "上月商务店型的房费收入",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights * sl.unit_price) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND h.hotel_type = '商务'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月各渠道的平均房价",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT b.channel AS channel, (SUM(sl.rooms * sl.nights * sl.unit_price)) / NULLIF(SUM(sl.rooms * sl.nights), 0) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY b.channel\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那度假呢",
+     "expect": {
+      "kind": "clarify",
+      "note_contains": "无同类型实体可替换"
+     }
+    },
+    {
+     "q": "上月度假店型的房费收入",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights * sl.unit_price) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND h.hotel_type = '度假'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那精品呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights * sl.unit_price) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND h.hotel_type = '精品'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcd06",
+   "scenario": "topic_switch_cache",
+   "role": "boss",
+   "desc": "hotel 话题切换后回指重问（与 t1 同 DSL 指纹→缓存命中）→region 换血→渠道宾客数分组",
+   "turns": [
+    {
+     "q": "上月华东地区的间夜数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND h.region = '华东'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月各房型的平均房价",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT rt.type_name AS room_type, (SUM(sl.rooms * sl.nights * sl.unit_price)) / NULLIF(SUM(sl.rooms * sl.nights), 0) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY rt.type_name\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月华东地区的间夜数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND h.region = '华东'\nORDER BY value DESC\nLIMIT 100",
+      "from_cache": true
+     }
+    },
+    {
+     "q": "那华南呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND h.region = '华南'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    },
+    {
+     "q": "上月各渠道的入住宾客数",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT b.channel AS channel, COUNT(DISTINCT b.guest_id) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nGROUP BY b.channel\nORDER BY value DESC\nLIMIT 100"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mcd07",
+   "scenario": "refusal_mixed",
+   "role": "boss",
+   "desc": "hotel 拒答插入对话：预测类拒答→回到历史数据→房型分组→亲子→套房换血",
+   "turns": [
+    {
+     "q": "上月直销渠道的房费收入",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT SUM(sl.rooms * sl.nights * sl.unit_price) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND b.channel = '直销'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "预测下季度的房费收入",
+     "expect": {
+      "kind": "refusal"
+     }
+    },
+    {
+     "q": "上月毛利率",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT ((SUM(sl.rooms * sl.nights * sl.unit_price)) - (SUM(sl.rooms * sl.nights * rt.room_cost))) / NULLIF((SUM(sl.rooms * sl.nights * sl.unit_price)), 0) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH)\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "上月亲子房型的预订量",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT COUNT(DISTINCT b.booking_id) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND rt.type_name = '亲子'\nORDER BY value DESC\nLIMIT 100"
+     }
+    },
+    {
+     "q": "那套房呢",
+     "expect": {
+      "kind": "answer",
+      "gold_sql": "SELECT COUNT(DISTINCT b.booking_id) AS value\nFROM stay_lines sl JOIN bookings b ON sl.booking_id = b.booking_id JOIN hotels h ON b.hotel_id = h.hotel_id JOIN room_types rt ON sl.room_type_id = rt.room_type_id\nWHERE strftime('%Y-%m', b.checkin_date) >= strftime('%Y-%m', date_trunc('month', DATE '2026-09-01') - INTERVAL (0) MONTH) AND rt.type_name = '套房'\nORDER BY value DESC\nLIMIT 100",
+      "note_contains": "指代消解"
+     }
+    }
+   ]
+  }
+ ]
+}

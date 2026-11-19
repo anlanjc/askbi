@@ -2,20 +2,20 @@
 
 > 用途：面试被问"上过线吗/多少并发/这不就是玩具吗"时，这份文档就是"我清楚差距在哪"的书面证据。
 > 口径：现状证据全部来自 EVIDENCE.md/evidence/ 实测；差距不回避；每项给补齐方案与预估工作量。
-> 更新：2026-10-29。
+> 更新：2026-11-20（[1B6] 复核 AB-23 清账：现状盘点刷新至 HEAD d559fcb 口径；本文件此后纳入测试计数清账的固定刷新清单）。
 
 ## 一、现状盘点（已具备的生产要素）
 
 | 要素 | 现状 | 证据 |
 |---|---|---|
-| 测试 | 313 项 pytest 全绿（单元/集成/API roundtrip/红队/属主隔离） | `pytest -q` |
-| 评测 | 单轮 116 条（mock 100%/real 94.8%+holdout 盲测）+ 多轮 64 轮（mock 100%/real 89.1%）+ no_qa 消融（QA 价值 +58pp） | eval/report_*.md |
+| 测试 | **516 项 pytest 全绿**（单元/集成/API roundtrip/红队三轮 93+41+74/AST 白名单守卫 63/词表 spec 化 13/属主隔离）——单一出处=EVIDENCE.md §4 | `pytest -q` |
+| 评测 | 单轮六套全 100%（v1 33/v2 116/v3 300/B·C·D 各 26，mock）+ real 94.8%（v2 116，holdout 盲测）+ 多轮 30 条 64 轮（mock 100%；27/30 漂移注记在案）+ 深评 20 组 95 轮 100% + no_qa 消融（QA 价值 +58pp） | eval/report_*.md、evidence/multiturn_deep_report.md |
 | 可靠性 | 故障注入 6 场景×10 零崩溃；LLMError 重试+四节点降级；SQL 超时 interrupt | evidence/fault_injection.md |
 | 性能 | 编排上限 110-124 QPS（0 延迟）；300ms 模拟 LLM 延迟下 P50≈1.2s；瓶颈归因=LLM 串行调用（light 2 次/full 4 次），检索占比个位数 | evidence/load_test.md |
 | 安全 | DuckDB 只读沙箱+语句守卫+维度白名单+LIMIT 钳制+行级权限编译期注入+API key 中间件+MASKED_FIELDS 纵深 | app/data/sandbox.py、schema.py |
 | 成本 | token 分节点记账、预算路由 4→2 次调用、查询缓存（修复后 +12% 吞吐）、评测成本账本（全量 ≈¥1.7/遍） | evidence/load_test.md、eval/ |
 | 工程化 | Docker/docker-compose、CI（test+eval-gate 双 job，push 即生效）、分模块 git 历史、EVIDENCE 证据链 | .github/workflows/ci.yml |
-| 语义层解耦 | DatasetSpec 注册表+双数据集（电商/咖啡）验证"换源上层不改" | app/data/registry.py、dataset_b.py |
+| 语义层解耦 | DatasetSpec 注册表+四数据源（电商/咖啡/账单/酒旅四套物理模型）验证"换源上层不改"；SQL 守卫 sqlglot AST 白名单四层纵深（1B5） | app/data/registry.py、dataset_b/c/d.py、sandbox.py |
 
 ## 二、生产差距清单（诚实版，每项含补齐方案）
 

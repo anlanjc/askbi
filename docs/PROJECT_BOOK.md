@@ -80,7 +80,7 @@
 4. **"多轮对话怎么设计？"**——两层：指代消解改写输入（保守规则，判不出走澄清兜底）+ 澄清挂起暂停等输入（interrupt+checkpointer）。追问：上下文存什么（一行问题文本，隐私面最小）；误判方向（宁可当独立问题不可答错）；与 miniagent 权限确认的对照（两种 HITL 挂起语义）。
 5. **"行级权限为什么做在编译层？"**——控制 SQL 生成端从源头注入，改写任意 SQL 可被 CTE/子查询绕过。追问：角色怎么建模（ROLE_SCOPES 声明式）；缓存会不会破权限（role 显式参与指纹，cache.py:111）；跨数据源呢（权限作用域随 DatasetSpec 声明）。
 6. **"LLM 挂了/返回垃圾怎么办？"**——指数退避重试+四节点降级语义（澄清放行/生成拒答/叙述留空/质检回退确定性）。追问：怎么证明（故障注入 6 场景×10 零崩溃）；SQL 超时（interrupt() 跨线程打断）；错误会不会被缓存（错误结果不缓存，仍走修复回路）。
-7. **"换个数据源要改多少代码？"**——零上层改动：DatasetSpec 注册表（维度/指标/取值白名单/NL 词表全声明式）。追问：证据（coffee 26/26 + saas 26/26 mock 双 100%，95 项存量测试零改动）；同 DSL 跨源缓存（数据集标识参与指纹，互不命中）；RAG 样例库边界（未按源隔离，诚实声明于 EVIDENCE §6）。
+7. **"换个数据源要改多少代码？"**——零上层改动：DatasetSpec 注册表（维度/指标/取值白名单/NL 词表全声明式）。追问：证据（coffee 26/26 + saas 26/26 mock 双 100%，95 项存量测试零改动；现已四源各 26/26）；同 DSL 跨源缓存（数据集标识参与指纹，互不命中）；RAG 样例库已按 spec 标签隔离（S9-OPT2 落地，get_example_store(dataset) 只装载同标签样例，tests/test_rag_isolation.py 9 项守门——[1B6] 复核勘误：本页旧版曾误述"未隔离"，以 EVIDENCE §6 现行结论为准）。
 8. **"怎么证明你的数字可信？"**——三层评测（单轮 116+多轮 64 轮+holdout 13）+金标由 compile_sql 生成可重建+mock/real 分列。追问：holdout 纪律（不参与调参，clarifier 校准只用 main split）；失败归因（94.8% 的 6 条逐条有 trace 归因）；评测污染怎么防（构建期自检 mock 可答性）。
 9. **"管理面操作怎么追溯？"**——审计日志：谁在何时通过什么改了什么，变更与审计同窗口落盘，审计写失败变更回滚。追问：agentgate 是 DB 同事务、askbi 无 DB 怎么翻译（同锁窗口+回滚，app/audit.py 模块头）；密钥会不会进审计（detail 只放计数/文件名/开关 from→to）；多 worker 边界（归档改名假定单 worker，PRODUCTION_GAP）。
 10. **"压测怎么做的，数字可信吗？"**——双口径：进程内（编排+SQL 本体）+ HTTP 全栈（uvicorn 真进程 SSE 全链）；c=1 差值=附加开销，health 地板检验客户端瓶颈。追问：为什么 c=1（高并发差值混入排队，agentgate 教训）；瓶颈归属（LLM 串行调用次数×延迟，HTTP 是常数项）；缓存收益（进程内 +12%，HTTP 口径复现见 evidence/load_test_http.md 表3）。
@@ -90,9 +90,9 @@
 - 评测是 mock 可判定集（措辞对齐解析器词表），真实模型泛化上限由 real 报告失败明细界定；holdout 13 条不参与调参。
 - 未上生产：无真实 DAU/QPS，压测是 mock+模拟延迟形态；数据是固定种子合成（可复现是评测前提）。
 - DSL 表达力有边界（窗口函数/复杂嵌套不支持）——覆盖不了明确拒答。
-- RAG 样例库未按数据集隔离（真实 provider 下 coffee/saas 问题会检索到电商 few-shot，mock 不受影响）；多轮词表取默认数据集（followup 默认关）。
+- RAG 样例库已按数据集隔离（S9-OPT2 收口，tests/test_rag_isolation.py 9 项守门）；多轮指代消解词表已随激活 spec 走（[1B5] 收口，tests/test_followup_vocab_spec.py 13 项守门）——[1B6] 复核勘误（AB-24）：本页旧版两处曾误述为未收口边界，与 EVIDENCE §6/registry_adr §7 现行结论相反，已对齐；遗留边界仅剩通用后缀词（店型/档位）不随 spec 扩展（裸实体形态可消解）。
 - 审计日志多 worker 部署注记：JSONL 追加多进程可交叉，任务清除归档改名假定单 worker 口径（PRODUCTION_GAP）。
-- 演进方向：LangGraph checkpointer 持久化（SqliteSaver/PostgresSaver）、sql_agent 升级原生 Function Calling、DuckDB 换数仓 target、RAG 样例库按源隔离。完整清单见原书存档 §8 与 PRODUCTION_GAP.md。
+- 演进方向：LangGraph checkpointer 持久化（SqliteSaver/PostgresSaver）、sql_agent 升级原生 Function Calling、DuckDB 换数仓 target、词表后缀词随 spec 扩展（店型/档位）。完整清单见原书存档 §8 与 PRODUCTION_GAP.md。（RAG 样例库按源隔离已于 S9-OPT2 落地，从演进清单移除——[1B6] 复核勘误。）
 
 ---
 

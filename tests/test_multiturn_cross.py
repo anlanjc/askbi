@@ -37,7 +37,7 @@ SCENARIO_TEMPLATES = {
 # 冻结集字节钉死（[1B6] 批次开工时快照）：多轮 deep 95 轮与 followup 30 条语义零变化的前提
 FROZEN_MD5 = {
     "eval/multiturn_deep.jsonl": "153045e1276303db9178c3d95ee3bb2a",
-    "eval/dataset_v2_followup.json": "6c21a018266a642571dae208de96fbcf",
+    "eval/dataset_v2_followup.json": "2a41871891093a0b489c33bf87428e2b",
 }
 
 

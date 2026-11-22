@@ -335,6 +335,16 @@ def _parse_single(s: str) -> exp.Expression:
         raise SqlRejected(
             f"解析层: SQL 解析失败: {_ANSI_RE.sub('', str(e))[:120]}｜原文: {s[:80]!r}"
         ) from None
+    except RecursionError:
+        # RT4-DEEP（红队 round 4；review_report_5 AB-9 前半，实测确认未修后当日收口）：
+        # 深层括号嵌套（64KB 上界窗口内 ~2.7k 层）令 sqlglot 递归解析栈溢出——
+        # RecursionError（RuntimeError 子类）曾逃逸守卫分类直穿调用方：executor 修复
+        # 循环把它当普通 SQL 失败多跑两轮、MCP execute_sync 面原样外抛。按 ParseError
+        # 同口径收口为 SqlRejected（守卫拒绝语义）。栈在进入本 except 帧时已展开，
+        # 此处转抛安全。字节上界（MAX_SQL_BYTES）拦住窗口外的更极端深度。
+        raise SqlRejected(
+            f"解析层: SQL 嵌套过深解析失败（递归上限）｜原文: {s[:80]!r}"
+        ) from None
     trees = [t for t in trees if t is not None]
     if len(trees) != 1:
         raise SqlRejected(f"解析层: 解析出 {len(trees)} 条语句，已拒绝（仅允许单条查询）")
